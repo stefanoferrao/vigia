@@ -334,7 +334,9 @@ class Pill(QWidget):
         style = self.app.config.get("icon_style")
         dpr = self.devicePixelRatioF()
 
-        rows = self.rows[: self.app.config.get("max_providers")]
+        hidden_providers = self.app.hidden_items("hide_providers")
+        rows = [row for row in self.rows
+                if row["id"].lower() not in hidden_providers][: self.app.config.get("max_providers")]
         if not rows:
             self.box.addWidget(self.muted_label("—"))
         for row in rows:
@@ -357,17 +359,22 @@ class Pill(QWidget):
                 icon.setFixedSize(self.css["icon"], self.css["icon"])
                 icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                 self.box.addWidget(icon)
-            value = self.value_label(row["value"], core.value_tint(style, row["percent"]))
+            value = self.value_label(row["value"], core.value_tint(
+                style, row["percent"], self.app.config.get("alert_warn"),
+                self.app.config.get("alert_critical")))
             value.setToolTip(f"{row['name']} — {row['label']}" if row["label"] else row["name"])
             self.box.addWidget(value)
 
         if self.app.config.get("show_system"):
+            hidden_system = self.app.hidden_items("hide_system")
             self.box.addWidget(self.divider())
             for name, reading in self.app.metrics.snapshot():
-                if reading is None:
+                if reading is None or name.lower() in hidden_system:
                     continue
                 self.box.addWidget(self.muted_label(name))
-                value = self.value_label(f"{reading}%", core.TEXT_PRIMARY)
+                value = self.value_label(f"{reading}%", core.value_tint(
+                    style, reading, self.app.config.get("alert_warn"),
+                    self.app.config.get("alert_critical")))
                 self.box.addWidget(value)
                 self.system_labels[name] = value
 
@@ -575,6 +582,34 @@ class VigIA(QObject):
         core.log(f"monitor {choice!r} not found; using primary")
         return [self.primary_index()]
 
+    def hidden_items(self, key):
+        return {item.strip().lower() for item in str(self.config.get(key)).split(",") if item.strip()}
+
+    def set_hidden(self, key, values):
+        self.config.set(key, ",".join(sorted(values)))
+
+    def apply_rows(self):
+        for window in self.windows:
+            window.set_rows(self.rows)
+
+    def toggle_provider(self, provider_id, checked):
+        hidden = self.hidden_items("hide_providers")
+        if checked:
+            hidden.discard(provider_id.lower())
+        else:
+            hidden.add(provider_id.lower())
+        self.set_hidden("hide_providers", hidden)
+        self.apply_rows()
+
+    def toggle_system(self, name, checked):
+        hidden = self.hidden_items("hide_system")
+        if checked:
+            hidden.discard(name.lower())
+        else:
+            hidden.add(name.lower())
+        self.set_hidden("hide_system", hidden)
+        self.apply_rows()
+
     def effective_alpha(self, hovered=False):
         return min(1.0, self.config.get("opacity") + (0.10 if hovered else 0.0))
 
@@ -682,6 +717,33 @@ class VigIA(QObject):
             action.triggered.connect(lambda _=False, value=key: self.set_icon_style(value))
             group.addAction(action)
             icons_menu.addAction(action)
+
+        items_menu = menu.addMenu(self.config.t("menu_items"))
+        hidden_providers = self.hidden_items("hide_providers")
+        for row in self.rows:
+            action = QAction(row["name"], items_menu)
+            action.setCheckable(True)
+            action.setChecked(row["id"].lower() not in hidden_providers)
+            action.toggled.connect(
+                lambda checked, pid=row["id"]: self.toggle_provider(pid, checked))
+            items_menu.addAction(action)
+        missing = sorted(hidden_providers - {row["id"].lower() for row in self.rows})
+        for provider_id in missing:
+            action = QAction(provider_id, items_menu)
+            action.setCheckable(True)
+            action.setChecked(False)
+            action.toggled.connect(
+                lambda checked, pid=provider_id: self.toggle_provider(pid, checked))
+            items_menu.addAction(action)
+        items_menu.addSeparator()
+        hidden_system = self.hidden_items("hide_system")
+        for name in ("CPU", "RAM", "GPU"):
+            action = QAction(name, items_menu)
+            action.setCheckable(True)
+            action.setChecked(name.lower() not in hidden_system)
+            action.toggled.connect(
+                lambda checked, key=name: self.toggle_system(key, checked))
+            items_menu.addAction(action)
 
         monitor_menu = menu.addMenu(self.config.t("menu_monitor"))
         group = QActionGroup(monitor_menu)

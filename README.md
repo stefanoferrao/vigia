@@ -93,7 +93,16 @@ refresh_minutes = 5     # 1 a 60
 max_providers = 4       # 1 a 8
 hotkey = "<Control><Alt>u"
 language = "auto"       # auto | pt | en | es | fr | de
+alert_warn = 60         # icon_style = "alert": âmbar a partir daqui
+alert_critical = 80     # ... e vermelho a partir daqui
+hide_providers = ""     # ids separados por vírgula: "openai,gemini"
+hide_system = ""        # "cpu,ram,gpu" para esconder itens do sistema
 ```
+
+Para escolher o que aparece, use o menu **Itens** (checkbox por provedor e por
+CPU/RAM/GPU) — a escolha vai para `hide_providers` e `hide_system`. Itens ocultos
+continuam listados no menu, então dá para trazê-los de volta. Com `icon_style =
+"alert"`, os números ficam âmbar e vermelho conforme `alert_warn` / `alert_critical`.
 
 A tabela `[overlay.positions]` guarda o deslocamento de cada monitor (chave = nome
 da tela) depois de um arrasto — não precisa mexer nela. *Restaurar posição* no

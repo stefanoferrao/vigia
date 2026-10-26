@@ -14,7 +14,7 @@ import tomllib
 from datetime import datetime
 
 APP_NAME = "VigIA"
-VERSION = "2.0.3"
+VERSION = "2.1.0"
 IS_WINDOWS = platform.system() == "Windows"
 HOME = os.path.expanduser("~")
 MARGIN = 18
@@ -54,6 +54,7 @@ STRINGS = {
         "menu_monitor": "Monitor",
         "menu_anchor": "Posição",
         "menu_language": "Idioma",
+        "menu_items": "Itens",
         "size_small": "Pequeno", "size_medium": "Médio", "size_large": "Grande",
         "icons_brand": "Cor da marca", "icons_mono": "Monocromático",
         "icons_alert": "Alerta por uso",
@@ -83,6 +84,7 @@ STRINGS = {
         "menu_monitor": "Monitor",
         "menu_anchor": "Position",
         "menu_language": "Language",
+        "menu_items": "Items",
         "size_small": "Small", "size_medium": "Medium", "size_large": "Large",
         "icons_brand": "Brand colour", "icons_mono": "Monochrome",
         "icons_alert": "Usage alert",
@@ -112,6 +114,7 @@ STRINGS = {
         "menu_monitor": "Monitor",
         "menu_anchor": "Posición",
         "menu_language": "Idioma",
+        "menu_items": "Elementos",
         "size_small": "Pequeño", "size_medium": "Mediano", "size_large": "Grande",
         "icons_brand": "Color de marca", "icons_mono": "Monocromático",
         "icons_alert": "Alerta por uso",
@@ -141,6 +144,7 @@ STRINGS = {
         "menu_monitor": "Écran",
         "menu_anchor": "Position",
         "menu_language": "Langue",
+        "menu_items": "Éléments",
         "size_small": "Petit", "size_medium": "Moyen", "size_large": "Grand",
         "icons_brand": "Couleur de marque", "icons_mono": "Monochrome",
         "icons_alert": "Alerte d'usage",
@@ -170,6 +174,7 @@ STRINGS = {
         "menu_monitor": "Monitor",
         "menu_anchor": "Position",
         "menu_language": "Sprache",
+        "menu_items": "Elemente",
         "size_small": "Klein", "size_medium": "Mittel", "size_large": "Groß",
         "icons_brand": "Markenfarbe", "icons_mono": "Einfarbig",
         "icons_alert": "Nutzungswarnung",
@@ -215,6 +220,10 @@ DEFAULTS = {
     "max_providers": 4,
     "hotkey": "<Control><Alt>u",
     "language": "auto",
+    "alert_warn": 60,        # icon_style = "alert": amber from this percentage
+    "alert_critical": 80,    # ... and red from this one
+    "hide_providers": "",    # comma-separated provider ids to keep out of the pill
+    "hide_system": "",       # comma-separated cpu,ram,gpu to keep out of the pill
 }
 ORDER = list(DEFAULTS)
 
@@ -325,6 +334,12 @@ class Config:
             self.values["language"] = DEFAULTS["language"]
         self.values["refresh_minutes"] = max(1, min(60, self.values["refresh_minutes"]))
         self.values["max_providers"] = max(1, min(8, self.values["max_providers"]))
+        self.values["alert_warn"] = max(1, min(99, self.values["alert_warn"]))
+        self.values["alert_critical"] = max(self.values["alert_warn"] + 1,
+                                            min(100, self.values["alert_critical"]))
+        for key in ("hide_providers", "hide_system"):
+            items = [item.strip().lower() for item in str(self.values[key]).split(",")]
+            self.values[key] = ",".join(dict.fromkeys(item for item in items if item))
 
     def save(self):
         self.sanitize()
@@ -490,6 +505,7 @@ def provider_rows(report, limit=4):
             continue
         brand = str(entry.get("brand") or entry.get("id") or "").split("@", 1)[0]
         rows.append({
+            "id": str(entry.get("id") or brand),
             "brand": brand,
             "name": str(entry.get("display_name") or entry.get("name") or brand),
             "value": metric_display(metric),
@@ -719,11 +735,12 @@ def icon_tint(brand, style):
     return BRAND_COLORS.get(brand, DEFAULT_ICON_TINT)
 
 
-def value_tint(style, percent):
+def value_tint(style, percent, warn=60, critical=80):
+    """Neutral text, or amber/red once the usage reaches the alert bands."""
     if style != "alert" or not isinstance(percent, (int, float)):
         return TEXT_PRIMARY
-    if percent >= 80:
+    if percent >= critical:
         return "#ed4b48"
-    if percent >= 60:
+    if percent >= warn:
         return "#f2bd34"
     return TEXT_PRIMARY

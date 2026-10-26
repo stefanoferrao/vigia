@@ -121,6 +121,26 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.get("language"), "auto")
 
 
+class AlertTests(unittest.TestCase):
+    def test_thresholds(self):
+        self.assertEqual(core.value_tint("alert", 59), core.TEXT_PRIMARY)
+        self.assertEqual(core.value_tint("alert", 60), "#f2bd34")
+        self.assertEqual(core.value_tint("alert", 80), "#ed4b48")
+        self.assertEqual(core.value_tint("brand", 99), core.TEXT_PRIMARY)
+        self.assertEqual(core.value_tint("alert", 30, warn=20, critical=25), "#ed4b48")
+
+    def test_hidden_lists_are_normalised(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "vigia.toml")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write('[overlay]\nhide_providers = " OpenAI , openai ,, OPENCODE-GO "\n'
+                             'hide_system = "CPU, gpu"\n')
+            with mock.patch.object(core, "LEGACY_CONFIG", os.path.join(directory, "missing.toml")):
+                config = core.Config(path)
+            self.assertEqual(config.get("hide_providers"), "openai,opencode-go")
+            self.assertEqual(config.get("hide_system"), "cpu,gpu")
+
+
 class ProviderTests(unittest.TestCase):
     def test_rows_follow_report_order_and_limit(self):
         rows = core.provider_rows(SAMPLE, limit=2)
