@@ -229,6 +229,31 @@ class Hotkey(QObject):
 
 # ----------------------------------------------------------------------------- pill
 
+class GearLabel(QLabel):
+    """Clickable gear that keeps the press so the release lands here."""
+
+    def __init__(self, callback):
+        super().__init__()
+        self.callback = callback
+        self.pressed = False
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.pressed = True
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            pressed, self.pressed = self.pressed, False
+            if pressed:
+                self.callback()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class Pill(QWidget):
     def __init__(self, app, screen_index):
         flags = Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus
@@ -240,6 +265,8 @@ class Pill(QWidget):
         self.screen = app.screens()[screen_index]
         self.hovered = False
         self.drag_offset = None
+        self.drag_origin = QPoint(0, 0)
+        self.drag_started = False
         self.value_labels = []
         self.system_labels = {}
         self.rows = []
@@ -344,12 +371,11 @@ class Pill(QWidget):
                 self.box.addWidget(value)
                 self.system_labels[name] = value
 
-        self.gear = QLabel()
+        self.gear = GearLabel(lambda: self.app.popup_menu(self.gear))
         self.gear.setPixmap(gear_pixmap(max(9, self.css["icon"] - 2), dpr))
         self.gear.setFixedSize(max(9, self.css["icon"] - 2), max(9, self.css["icon"] - 2))
         self.gear.setCursor(Qt.PointingHandCursor)
         self.gear.setToolTip(self.app.config.t("gear"))
-        self.gear.installEventFilter(self)
         self.gear_effect = QGraphicsOpacityEffect(self.gear)
         self.gear_effect.setOpacity(1.0 if self.hovered else 0.0)
         self.gear.setGraphicsEffect(self.gear_effect)
@@ -371,24 +397,21 @@ class Pill(QWidget):
 
     # -- interaction ---------------------------------------------------------
     def poll_hover(self):
+        if self.drag_offset is not None and QGuiApplication.mouseButtons() == Qt.NoButton:
+            self.drag_offset = None
+            self.drag_started = False
         inside = self.frameGeometry().contains(QCursor.pos())
         if inside != self.hovered:
             self.hovered = inside
             self.gear_effect.setOpacity(1.0 if inside else 0.0)
             self.update()
 
-    def eventFilter(self, obj, event):
-        if obj is getattr(self, "gear", None) and self.hovered:
-            if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
-                self.app.popup_menu(self.gear)
-                return True
-        return super().eventFilter(obj, event)
-
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.drag_offset = event.globalPosition().toPoint() - self.pos()
             self.drag_origin = event.globalPosition().toPoint()
             self.drag_started = False
+            self.grabMouse()
             event.accept()
         elif event.button() == Qt.RightButton:
             self.app.popup_menu(self)
@@ -413,6 +436,7 @@ class Pill(QWidget):
             moved = self.drag_started
             self.drag_offset = None
             self.drag_started = False
+            self.releaseMouse()
             if moved:
                 self.app.remember_position(self)
             event.accept()
