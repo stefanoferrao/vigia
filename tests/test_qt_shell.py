@@ -5,11 +5,15 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+REQUIRE_QT = os.environ.get("VIGIA_REQUIRE_QT") == "1"
+
 try:
     from PySide6.QtWidgets import QApplication
     import vigia_qt
     HAVE_QT = True
-except Exception:  # pragma: no cover - environment without PySide6
+except Exception as error:  # pragma: no cover - environment without PySide6
+    if REQUIRE_QT:
+        raise
     HAVE_QT = False
 
 
