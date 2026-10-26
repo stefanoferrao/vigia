@@ -65,7 +65,8 @@ Ao abrir, a pílula aparece no canto superior direito do monitor principal.
 
 - **Passar o mouse** clareia o fundo e revela a engrenagem de configurações.
 - **Arrastar** move a pílula; a posição fica salva por monitor.
-- **Engrenagem** (ou botão direito) abre o menu com todos os ajustes.
+- **Engrenagem** (ou botão direito) abre o menu com todos os ajustes. O menu
+  **fica aberto** enquanto você muda as opções — só *Esconder* e *Sair* o fecham.
 - **Atalho padrão `Ctrl+Alt+U`** mostra/esconde (e inicia, se não estiver rodando).
 - **Sair de verdade** é pelo menu → *Sair*.
 

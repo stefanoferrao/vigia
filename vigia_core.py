@@ -14,7 +14,7 @@ import tomllib
 from datetime import datetime
 
 APP_NAME = "VigIA"
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 IS_WINDOWS = platform.system() == "Windows"
 HOME = os.path.expanduser("~")
 MARGIN = 18

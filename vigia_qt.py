@@ -229,6 +229,39 @@ class Hotkey(QObject):
 
 # ----------------------------------------------------------------------------- pill
 
+class StickyMenu(QMenu):
+    """Keeps the root menu open after a setting changes.
+
+    Submenus close themselves (keep_open=False) so the parent stays visible;
+    actions flagged with the "closes_menu" property close the whole popup.
+    """
+
+    def __init__(self, keep_open=True, parent=None):
+        super().__init__(parent)
+        self.keep_open = keep_open
+
+    def _activate(self, action):
+        if action is None or not action.isEnabled() or action.menu() is not None:
+            return False
+        action.trigger()
+        if action.property("closes_menu") or not self.keep_open:
+            self.hide()
+        return True
+
+    def mouseReleaseEvent(self, event):
+        if self._activate(self.actionAt(event.position().toPoint())):
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter):
+            if self._activate(self.activeAction()):
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+
 class GearLabel(QLabel):
     """Clickable gear that keeps the press so the release lands here."""
 
@@ -378,7 +411,7 @@ class Pill(QWidget):
                 self.box.addWidget(value)
                 self.system_labels[name] = value
 
-        self.gear = GearLabel(lambda: self.app.popup_menu(self.gear))
+        self.gear = GearLabel(self.show_menu)
         self.gear.setPixmap(gear_pixmap(max(9, self.css["icon"] - 2), dpr))
         self.gear.setFixedSize(max(9, self.css["icon"] - 2), max(9, self.css["icon"] - 2))
         self.gear.setCursor(Qt.PointingHandCursor)
@@ -403,6 +436,10 @@ class Pill(QWidget):
         painter.end()
 
     # -- interaction ---------------------------------------------------------
+    def show_menu(self):
+        # Defer: opening a popup inside the release event makes it close itself.
+        QTimer.singleShot(0, lambda: self.app.popup_menu(self.gear))
+
     def poll_hover(self):
         if self.drag_offset is not None and QGuiApplication.mouseButtons() == Qt.NoButton:
             self.drag_offset = None
@@ -421,7 +458,7 @@ class Pill(QWidget):
             self.grabMouse()
             event.accept()
         elif event.button() == Qt.RightButton:
-            self.app.popup_menu(self)
+            self.show_menu()
             event.accept()
         else:
             super().mousePressEvent(event)
@@ -615,18 +652,31 @@ class VigIA(QObject):
 
     # -- windows -------------------------------------------------------------
     def rebuild_windows(self):
-        for window in self.windows:
-            window.close()
-            window.deleteLater()
-        self.windows = []
-        for index in self.monitor_indices():
-            window = Pill(self, index)
+        """Keep existing pills alive; only add/remove what the monitor choice needs.
+
+        Recreating a window closes an open settings menu, so staying incremental
+        is what lets the menu survive a change.
+        """
+        wanted = self.monitor_indices()
+        existing = {window.screen_index: window for window in self.windows}
+        for index, window in list(existing.items()):
+            if index not in wanted:
+                window.close()
+                window.deleteLater()
+                del existing[index]
+        for index in wanted:
+            window = existing.get(index)
+            if window is None:
+                window = Pill(self, index)
+                existing[index] = window
+            else:
+                window.screen = self.screens()[index]
             window.set_rows(self.rows)
             if self.hidden:
                 window.hide()
             else:
                 window.show()
-            self.windows.append(window)
+        self.windows = [existing[index] for index in wanted]
         for window in self.windows:
             window.place()
 
@@ -674,15 +724,16 @@ class VigIA(QObject):
             self.trigger_refresh()
 
     # -- menu ----------------------------------------------------------------
-    def popup_menu(self, anchor):
-        menu = QMenu(anchor)
+    def popup_menu(self, anchor=None):
+        menu = StickyMenu(keep_open=True, parent=anchor)
         menu.setStyleSheet(MENU_QSS)
+        self.menu = menu
 
         header = menu.addAction(core.APP_NAME)
         header.setEnabled(False)
         menu.addSeparator()
 
-        opacity = menu.addMenu(self.config.t("menu_opacity"))
+        opacity = self.submenu(menu, self.config.t("menu_opacity"))
         group = QActionGroup(opacity)
         group.setExclusive(True)
         current = round(self.config.get("opacity") * 100)
@@ -694,7 +745,7 @@ class VigIA(QObject):
             group.addAction(action)
             opacity.addAction(action)
 
-        size_menu = menu.addMenu(self.config.t("menu_size"))
+        size_menu = self.submenu(menu, self.config.t("menu_size"))
         group = QActionGroup(size_menu)
         for key, label in (("small", self.config.t("size_small")),
                            ("medium", self.config.t("size_medium")),
@@ -706,7 +757,7 @@ class VigIA(QObject):
             group.addAction(action)
             size_menu.addAction(action)
 
-        icons_menu = menu.addMenu(self.config.t("menu_icons"))
+        icons_menu = self.submenu(menu, self.config.t("menu_icons"))
         group = QActionGroup(icons_menu)
         for key, label in (("brand", self.config.t("icons_brand")),
                            ("mono", self.config.t("icons_mono")),
@@ -718,7 +769,7 @@ class VigIA(QObject):
             group.addAction(action)
             icons_menu.addAction(action)
 
-        items_menu = menu.addMenu(self.config.t("menu_items"))
+        items_menu = self.submenu(menu, self.config.t("menu_items"))
         hidden_providers = self.hidden_items("hide_providers")
         for row in self.rows:
             action = QAction(row["name"], items_menu)
@@ -745,7 +796,7 @@ class VigIA(QObject):
                 lambda checked, key=name: self.toggle_system(key, checked))
             items_menu.addAction(action)
 
-        monitor_menu = menu.addMenu(self.config.t("menu_monitor"))
+        monitor_menu = self.submenu(menu, self.config.t("menu_monitor"))
         group = QActionGroup(monitor_menu)
         options = [("primary", self.config.t("monitor_primary")),
                    ("secondary", self.config.t("monitor_secondary")),
@@ -761,7 +812,7 @@ class VigIA(QObject):
             group.addAction(action)
             monitor_menu.addAction(action)
 
-        anchor_menu = menu.addMenu(self.config.t("menu_anchor"))
+        anchor_menu = self.submenu(menu, self.config.t("menu_anchor"))
         group = QActionGroup(anchor_menu)
         for key, label_key in core.ANCHORS.items():
             action = QAction(self.config.t(label_key), anchor_menu)
@@ -771,7 +822,7 @@ class VigIA(QObject):
             group.addAction(action)
             anchor_menu.addAction(action)
 
-        language_menu = menu.addMenu(self.config.t("menu_language"))
+        language_menu = self.submenu(menu, self.config.t("menu_language"))
         group = QActionGroup(language_menu)
         choices = [("auto", self.config.t("language_auto"))] + list(core.LANGUAGES.items())
         for key, label in choices:
@@ -809,8 +860,10 @@ class VigIA(QObject):
         menu.addAction(self.config.t("refresh_now"), self.trigger_refresh)
         menu.addAction(self.config.t("open_config"), self.open_config)
         menu.addAction(self.config.t("reset_position"), self.reset_position)
-        menu.addAction(self.config.t("hide"), self.hide_all)
-        menu.addAction(self.config.t("quit"), self.quit)
+        hide = menu.addAction(self.config.t("hide"), self.hide_all)
+        hide.setProperty("closes_menu", True)
+        quit_action = menu.addAction(self.config.t("quit"), self.quit)
+        quit_action.setProperty("closes_menu", True)
 
         menu.exec(QCursor.pos())
 
@@ -848,7 +901,10 @@ class VigIA(QObject):
 
     def set_always_on_top(self, enabled):
         self.config.set("always_on_top", enabled)
-        self.rebuild_windows()
+        for window in self.windows:
+            window.setWindowFlag(Qt.WindowStaysOnTopHint, enabled)
+            window.show()
+            window.place()
 
     def set_show_system(self, enabled):
         self.config.set("show_system", enabled)
@@ -858,6 +914,13 @@ class VigIA(QObject):
     def set_autostart(self, enabled):
         self.config.set("autostart", enabled)
         core.set_autostart(enabled, self.command_line())
+
+    def submenu(self, parent, title):
+        sub = StickyMenu(keep_open=False, parent=parent)
+        sub.setTitle(title)
+        sub.setStyleSheet(MENU_QSS)
+        parent.addMenu(sub)
+        return sub
 
     def open_config(self):
         try:
