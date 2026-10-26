@@ -1,0 +1,731 @@
+"""VigIA core — data, config, translations and metrics, with no GUI toolkit.
+
+Both shells (GTK on Linux, Qt on Windows) import this module so that behaviour
+and wording stay identical. Everything here is plain Python 3.11+.
+"""
+
+import glob
+import json
+import os
+import platform
+import shutil
+import subprocess
+import tomllib
+from datetime import datetime
+
+APP_NAME = "VigIA"
+VERSION = "2.0.0"
+IS_WINDOWS = platform.system() == "Windows"
+HOME = os.path.expanduser("~")
+MARGIN = 18
+
+if IS_WINDOWS:
+    CONFIG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.join(HOME, "AppData", "Roaming"), "vigia")
+    CACHE_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.join(HOME, "AppData", "Local"), "vigia")
+    RUNTIME_DIR = CACHE_DIR
+else:
+    CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "vigia")
+    CACHE_DIR = os.path.join(HOME, ".cache", "vigia")
+    RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or os.path.join(HOME, ".cache")
+
+CONFIG_PATH = os.path.join(CONFIG_DIR, "vigia.toml")
+LEGACY_CONFIG = os.path.join(HOME, ".config", "ai-usagebar", "overlay.toml")
+LOG_PATH = os.path.join(CACHE_DIR, "vigia.log")
+AUTOSTART_PATH = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"),
+    "autostart", "vigia.desktop",
+)
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_VALUE = "VigIA"
+
+LANGUAGES = {
+    "pt": "Português (Brasil)",
+    "en": "English",
+    "es": "Español",
+    "fr": "Français",
+    "de": "Deutsch",
+}
+
+STRINGS = {
+    "pt": {
+        "menu_opacity": "Transparência",
+        "menu_size": "Tamanho",
+        "menu_icons": "Ícones",
+        "menu_monitor": "Monitor",
+        "menu_anchor": "Posição",
+        "menu_language": "Idioma",
+        "size_small": "Pequeno", "size_medium": "Médio", "size_large": "Grande",
+        "icons_brand": "Cor da marca", "icons_mono": "Monocromático",
+        "icons_alert": "Alerta por uso",
+        "monitor_primary": "Principal", "monitor_secondary": "Secundário",
+        "monitor_all": "Ambos", "monitor_screen": "Tela {n}",
+        "always_on_top": "Sempre no topo",
+        "show_system": "Mostrar CPU / RAM / GPU",
+        "autostart": "Iniciar com a sessão",
+        "hotkey_hint": "Atalho: {accel}",
+        "refresh_now": "Atualizar agora",
+        "open_config": "Abrir config.toml",
+        "reset_position": "Restaurar posição",
+        "hide": "Esconder",
+        "quit": "Sair",
+        "gear": "Configurações",
+        "language_auto": "Automático (sistema)",
+        "anchor_top_left": "Topo esquerdo", "anchor_top_center": "Topo centro",
+        "anchor_top_right": "Topo direito", "anchor_middle_left": "Meio esquerdo",
+        "anchor_middle_center": "Meio centro", "anchor_middle_right": "Meio direito",
+        "anchor_bottom_left": "Base esquerda", "anchor_bottom_center": "Base centro",
+        "anchor_bottom_right": "Base direita",
+    },
+    "en": {
+        "menu_opacity": "Opacity",
+        "menu_size": "Size",
+        "menu_icons": "Icons",
+        "menu_monitor": "Monitor",
+        "menu_anchor": "Position",
+        "menu_language": "Language",
+        "size_small": "Small", "size_medium": "Medium", "size_large": "Large",
+        "icons_brand": "Brand colour", "icons_mono": "Monochrome",
+        "icons_alert": "Usage alert",
+        "monitor_primary": "Primary", "monitor_secondary": "Secondary",
+        "monitor_all": "Both", "monitor_screen": "Screen {n}",
+        "always_on_top": "Always on top",
+        "show_system": "Show CPU / RAM / GPU",
+        "autostart": "Start with session",
+        "hotkey_hint": "Shortcut: {accel}",
+        "refresh_now": "Refresh now",
+        "open_config": "Open config.toml",
+        "reset_position": "Reset position",
+        "hide": "Hide",
+        "quit": "Quit",
+        "gear": "Settings",
+        "language_auto": "Automatic (system)",
+        "anchor_top_left": "Top left", "anchor_top_center": "Top centre",
+        "anchor_top_right": "Top right", "anchor_middle_left": "Middle left",
+        "anchor_middle_center": "Middle centre", "anchor_middle_right": "Middle right",
+        "anchor_bottom_left": "Bottom left", "anchor_bottom_center": "Bottom centre",
+        "anchor_bottom_right": "Bottom right",
+    },
+    "es": {
+        "menu_opacity": "Opacidad",
+        "menu_size": "Tamaño",
+        "menu_icons": "Iconos",
+        "menu_monitor": "Monitor",
+        "menu_anchor": "Posición",
+        "menu_language": "Idioma",
+        "size_small": "Pequeño", "size_medium": "Mediano", "size_large": "Grande",
+        "icons_brand": "Color de marca", "icons_mono": "Monocromático",
+        "icons_alert": "Alerta por uso",
+        "monitor_primary": "Principal", "monitor_secondary": "Secundario",
+        "monitor_all": "Ambos", "monitor_screen": "Pantalla {n}",
+        "always_on_top": "Siempre encima",
+        "show_system": "Mostrar CPU / RAM / GPU",
+        "autostart": "Iniciar con la sesión",
+        "hotkey_hint": "Atajo: {accel}",
+        "refresh_now": "Actualizar ahora",
+        "open_config": "Abrir config.toml",
+        "reset_position": "Restaurar posición",
+        "hide": "Ocultar",
+        "quit": "Salir",
+        "gear": "Ajustes",
+        "language_auto": "Automático (sistema)",
+        "anchor_top_left": "Arriba izquierda", "anchor_top_center": "Arriba centro",
+        "anchor_top_right": "Arriba derecha", "anchor_middle_left": "Medio izquierda",
+        "anchor_middle_center": "Medio centro", "anchor_middle_right": "Medio derecha",
+        "anchor_bottom_left": "Abajo izquierda", "anchor_bottom_center": "Abajo centro",
+        "anchor_bottom_right": "Abajo derecha",
+    },
+    "fr": {
+        "menu_opacity": "Opacité",
+        "menu_size": "Taille",
+        "menu_icons": "Icônes",
+        "menu_monitor": "Écran",
+        "menu_anchor": "Position",
+        "menu_language": "Langue",
+        "size_small": "Petit", "size_medium": "Moyen", "size_large": "Grand",
+        "icons_brand": "Couleur de marque", "icons_mono": "Monochrome",
+        "icons_alert": "Alerte d'usage",
+        "monitor_primary": "Principal", "monitor_secondary": "Secondaire",
+        "monitor_all": "Les deux", "monitor_screen": "Écran {n}",
+        "always_on_top": "Toujours au-dessus",
+        "show_system": "Afficher CPU / RAM / GPU",
+        "autostart": "Lancer à la connexion",
+        "hotkey_hint": "Raccourci : {accel}",
+        "refresh_now": "Actualiser",
+        "open_config": "Ouvrir config.toml",
+        "reset_position": "Réinitialiser la position",
+        "hide": "Masquer",
+        "quit": "Quitter",
+        "gear": "Réglages",
+        "language_auto": "Automatique (système)",
+        "anchor_top_left": "Haut gauche", "anchor_top_center": "Haut centre",
+        "anchor_top_right": "Haut droite", "anchor_middle_left": "Milieu gauche",
+        "anchor_middle_center": "Milieu centre", "anchor_middle_right": "Milieu droite",
+        "anchor_bottom_left": "Bas gauche", "anchor_bottom_center": "Bas centre",
+        "anchor_bottom_right": "Bas droite",
+    },
+    "de": {
+        "menu_opacity": "Deckkraft",
+        "menu_size": "Größe",
+        "menu_icons": "Symbole",
+        "menu_monitor": "Monitor",
+        "menu_anchor": "Position",
+        "menu_language": "Sprache",
+        "size_small": "Klein", "size_medium": "Mittel", "size_large": "Groß",
+        "icons_brand": "Markenfarbe", "icons_mono": "Einfarbig",
+        "icons_alert": "Nutzungswarnung",
+        "monitor_primary": "Primär", "monitor_secondary": "Sekundär",
+        "monitor_all": "Beide", "monitor_screen": "Bildschirm {n}",
+        "always_on_top": "Immer im Vordergrund",
+        "show_system": "CPU / RAM / GPU anzeigen",
+        "autostart": "Mit Sitzung starten",
+        "hotkey_hint": "Tastenkürzel: {accel}",
+        "refresh_now": "Jetzt aktualisieren",
+        "open_config": "config.toml öffnen",
+        "reset_position": "Position zurücksetzen",
+        "hide": "Ausblenden",
+        "quit": "Beenden",
+        "gear": "Einstellungen",
+        "language_auto": "Automatisch (System)",
+        "anchor_top_left": "Oben links", "anchor_top_center": "Oben Mitte",
+        "anchor_top_right": "Oben rechts", "anchor_middle_left": "Mitte links",
+        "anchor_middle_center": "Mitte", "anchor_middle_right": "Mitte rechts",
+        "anchor_bottom_left": "Unten links", "anchor_bottom_center": "Unten Mitte",
+        "anchor_bottom_right": "Unten rechts",
+    },
+}
+
+ANCHORS = {
+    "top-left": "anchor_top_left", "top-center": "anchor_top_center",
+    "top-right": "anchor_top_right", "middle-left": "anchor_middle_left",
+    "middle-center": "anchor_middle_center", "middle-right": "anchor_middle_right",
+    "bottom-left": "anchor_bottom_left", "bottom-center": "anchor_bottom_center",
+    "bottom-right": "anchor_bottom_right",
+}
+
+DEFAULTS = {
+    "opacity": 0.82,
+    "size": "medium",
+    "icon_style": "brand",       # brand | mono | alert
+    "monitor": "primary",        # primary | secondary | all | <index> | <screen name>
+    "anchor": "top-right",
+    "always_on_top": True,
+    "show_system": False,
+    "autostart": True,
+    "refresh_minutes": 5,
+    "max_providers": 4,
+    "hotkey": "<Control><Alt>u",
+    "language": "auto",
+}
+ORDER = list(DEFAULTS)
+
+
+def log(message):
+    try:
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+        with open(LOG_PATH, "a", encoding="utf-8") as handle:
+            handle.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}\n")
+    except OSError:
+        pass
+
+
+def system_language():
+    for name in ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"):
+        value = os.environ.get(name)
+        if value:
+            code = value.split("_", 1)[0].split(".", 1)[0].lower()
+            if code in STRINGS:
+                return code
+    if IS_WINDOWS:
+        try:
+            import ctypes
+            code = ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF
+            primary = {9: "en", 7: "de", 10: "es", 12: "fr", 16: "pt", 22: "pt"}
+            if code in primary:
+                return primary[code]
+        except Exception:
+            pass
+    return "en"
+
+
+def translate(language, key, **kwargs):
+    text = STRINGS.get(language, STRINGS["en"]).get(key) or STRINGS["en"].get(key, key)
+    return text.format(**kwargs) if kwargs else text
+
+
+# --------------------------------------------------------------------------- config
+
+def _toml_value(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return f"{value:.2f}"
+    if isinstance(value, int):
+        return str(value)
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+class Config:
+    def __init__(self, path=None):
+        self.path = path or CONFIG_PATH
+        self.values = dict(DEFAULTS)
+        self.positions = {}
+        self.load()
+
+    def load(self):
+        self.positions = {}
+        if not os.path.isfile(self.path) and os.path.isfile(LEGACY_CONFIG):
+            try:
+                os.makedirs(os.path.dirname(self.path), exist_ok=True)
+                shutil.copyfile(LEGACY_CONFIG, self.path)
+                log(f"migrated config from {LEGACY_CONFIG}")
+            except OSError as error:
+                log(f"config migration failed: {error}")
+        try:
+            with open(self.path, "rb") as handle:
+                raw = tomllib.load(handle).get("overlay", {})
+        except (OSError, tomllib.TOMLDecodeError):
+            raw = {}
+        for key, default in DEFAULTS.items():
+            value = raw.get(key, default)
+            try:
+                if isinstance(default, bool):
+                    self.values[key] = bool(value)
+                elif isinstance(default, float):
+                    self.values[key] = float(value)
+                elif isinstance(default, int):
+                    self.values[key] = int(value)
+                else:
+                    self.values[key] = str(value)
+            except (TypeError, ValueError):
+                self.values[key] = default
+        positions = raw.get("positions") or {}
+        if isinstance(positions, dict):
+            for key, value in positions.items():
+                try:
+                    x, y = value
+                    self.positions[str(key)] = (int(x), int(y))
+                except (TypeError, ValueError):
+                    continue
+        self.sanitize()
+        if not os.path.isfile(self.path):
+            self.save()
+
+    def sanitize(self):
+        self.values["opacity"] = min(1.0, max(0.40, self.values["opacity"]))
+        if self.values["size"] not in ("small", "medium", "large"):
+            self.values["size"] = DEFAULTS["size"]
+        if self.values["icon_style"] not in ("brand", "mono", "alert"):
+            self.values["icon_style"] = DEFAULTS["icon_style"]
+        if self.values["monitor"] not in ("primary", "secondary", "all"):
+            try:
+                self.values["monitor"] = str(int(self.values["monitor"]))
+            except (TypeError, ValueError):
+                self.values["monitor"] = DEFAULTS["monitor"]
+        if self.values["anchor"] not in ANCHORS:
+            self.values["anchor"] = DEFAULTS["anchor"]
+        if self.values["language"] not in STRINGS and self.values["language"] != "auto":
+            self.values["language"] = DEFAULTS["language"]
+        self.values["refresh_minutes"] = max(1, min(60, self.values["refresh_minutes"]))
+        self.values["max_providers"] = max(1, min(8, self.values["max_providers"]))
+
+    def save(self):
+        self.sanitize()
+        lines = [
+            "# VigIA — edits here are picked up by `vigia --reload`.",
+            "[overlay]",
+        ]
+        for key in ORDER:
+            lines.append(f"{key} = {_toml_value(self.values[key])}")
+        if self.positions:
+            lines.append("")
+            lines.append("[overlay.positions]")
+            for key in sorted(self.positions):
+                x, y = self.positions[key]
+                lines.append(f'"{key}" = [{int(x)}, {int(y)}]')
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            with open(self.path, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
+        except OSError as error:
+            log(f"config write failed: {error}")
+
+    def set(self, key, value):
+        self.values[key] = value
+        self.save()
+
+    def get(self, key):
+        return self.values[key]
+
+    def language(self):
+        choice = self.get("language")
+        return choice if choice in STRINGS else system_language()
+
+    def t(self, key, **kwargs):
+        return translate(self.language(), key, **kwargs)
+
+
+def set_autostart(enabled, command):
+    """Register (or remove) the app at login. `command` is the full CLI line."""
+    if IS_WINDOWS:
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+                if enabled:
+                    winreg.SetValueEx(key, RUN_VALUE, 0, winreg.REG_SZ, command)
+                else:
+                    try:
+                        winreg.DeleteValue(key, RUN_VALUE)
+                    except FileNotFoundError:
+                        pass
+        except OSError as error:
+            log(f"autostart update failed: {error}")
+        return
+
+    if enabled:
+        try:
+            os.makedirs(os.path.dirname(AUTOSTART_PATH), exist_ok=True)
+            with open(AUTOSTART_PATH, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "[Desktop Entry]\n"
+                    "Type=Application\n"
+                    "Name=VigIA\n"
+                    "Comment=AI usage and system metrics at a glance\n"
+                    f"Exec={command}\n"
+                    "Icon=vigia\n"
+                    "Terminal=false\n"
+                    "X-GNOME-Autostart-enabled=true\n"
+                    "X-GNOME-Autostart-Delay=6\n"
+                )
+        except OSError as error:
+            log(f"autostart write failed: {error}")
+    else:
+        try:
+            os.unlink(AUTOSTART_PATH)
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            log(f"autostart remove failed: {error}")
+
+
+# ------------------------------------------------------------------------ providers
+
+def installed_binary(name, home=None, override=None):
+    """Find the ai-usagebar CLI without trusting an arbitrary PATH entry."""
+    home = home or HOME
+    if override:
+        return override
+    candidates = [
+        os.path.join(home, ".local", "bin", name),
+        os.path.join(home, ".cargo", "bin", name),
+        "/usr/local/bin/" + name,
+        "/usr/bin/" + name,
+    ]
+    if IS_WINDOWS:
+        local = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+        candidates = [
+            os.path.join(local, "Programs", "ai-usagebar", name + ".exe"),
+            os.path.join(local, "Programs", name, name + ".exe"),
+            os.path.join(local, name, name + ".exe"),
+        ]
+    for candidate in candidates:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    found = shutil.which(name) or (shutil.which(name + ".exe") if IS_WINDOWS else None)
+    return found or (candidates[0] if candidates else name)
+
+
+def metric_display(metric):
+    percent = metric.get("percent")
+    if metric.get("headline") == "value" and metric.get("value") not in (None, ""):
+        return str(metric["value"])
+    if isinstance(percent, (int, float)):
+        return f"{percent:g}%"
+    return str(metric.get("value") or "—")
+
+
+def summary_metric(entry):
+    metrics = entry.get("metrics") or []
+    quota = [metric for metric in metrics if not metric.get("group")] or metrics
+    if not quota:
+        return None
+    return max(quota, key=lambda item: item.get("percent") or 0)
+
+
+def dashboard_entries(data):
+    data = data or {}
+    entries = list(data.get("entries") or [])
+    order = data.get("overview_vendors")
+    if isinstance(order, list) and order:
+        rank = {}
+        for item in order:
+            if isinstance(item, str) and item and item not in rank:
+                rank[item] = len(rank)
+
+        def vendor(entry):
+            slug = str(entry.get("id") or "").split("@", 1)[0]
+            return slug or str(entry.get("name") or "")
+
+        indexed = list(enumerate(entries))
+        indexed.sort(key=lambda pair: (rank.get(vendor(pair[1]), len(rank)), pair[0]))
+        return [entry for _, entry in indexed]
+    primary = data.get("primary")
+    entries.sort(key=lambda entry: (entry.get("id") != primary and entry.get("name") != primary))
+    return entries
+
+
+def fetch_report(binary=None, timeout=25):
+    binary = binary or installed_binary("ai-usagebar", override=os.environ.get("AI_USAGEBAR_BIN"))
+    options = {"capture_output": True, "text": True, "timeout": timeout}
+    if IS_WINDOWS:
+        options["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+    result = subprocess.run([binary, "usage", "--json"], **options)
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RuntimeError((result.stderr or "").strip()[:200] or f"ai-usagebar rc={result.returncode}")
+    return json.loads(result.stdout)
+
+
+def provider_rows(report, limit=4):
+    rows = []
+    for entry in dashboard_entries(report):
+        metric = summary_metric(entry)
+        if metric is None:
+            continue
+        brand = str(entry.get("brand") or entry.get("id") or "").split("@", 1)[0]
+        rows.append({
+            "brand": brand,
+            "name": str(entry.get("display_name") or entry.get("name") or brand),
+            "value": metric_display(metric),
+            "percent": metric.get("percent"),
+            "label": metric.get("label") or "",
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+# ------------------------------------------------------------------------- metrics
+
+class SystemMetrics:
+    """CPU/RAM/GPU. psutil when present; /proc and sysfs on Linux; nvidia-smi on Windows."""
+
+    def __init__(self):
+        try:
+            import psutil
+            self._psutil = psutil
+            psutil.cpu_percent(None)
+        except ImportError:
+            self._psutil = None
+        self._last_cpu = None if self._psutil else self._cpu_sample()
+
+    @staticmethod
+    def _cpu_sample():
+        try:
+            with open("/proc/stat", encoding="ascii") as handle:
+                fields = handle.readline().split()[1:]
+            values = [int(value) for value in fields]
+        except (OSError, ValueError, IndexError):
+            return None
+        idle = values[3] + (values[4] if len(values) > 4 else 0)
+        return (sum(values), idle)
+
+    def cpu(self):
+        if self._psutil is not None:
+            try:
+                return max(0, min(100, round(self._psutil.cpu_percent(None))))
+            except Exception:
+                return None
+        if IS_WINDOWS:
+            return None
+        sample = self._cpu_sample()
+        if not sample or not self._last_cpu:
+            self._last_cpu = sample
+            return None
+        total = sample[0] - self._last_cpu[0]
+        idle = sample[1] - self._last_cpu[1]
+        self._last_cpu = sample
+        if total <= 0:
+            return None
+        return max(0, min(100, round((total - idle) * 100 / total)))
+
+    def ram(self):
+        if self._psutil is not None:
+            try:
+                return max(0, min(100, round(self._psutil.virtual_memory().percent)))
+            except Exception:
+                return None
+        if IS_WINDOWS:
+            return None
+        try:
+            values = {}
+            with open("/proc/meminfo", encoding="ascii") as handle:
+                for line in handle:
+                    key, _, rest = line.partition(":")
+                    values[key] = int(rest.split()[0])
+            total = values.get("MemTotal", 0)
+            available = values.get("MemAvailable", values.get("MemFree", 0))
+        except (OSError, ValueError, IndexError):
+            return None
+        if total <= 0:
+            return None
+        return max(0, min(100, round((total - available) * 100 / total)))
+
+    def gpu(self):
+        if IS_WINDOWS:
+            return self._gpu_nvidia()
+        for path in sorted(glob.glob("/sys/class/drm/card*/device/gpu_busy_percent")):
+            try:
+                with open(path, encoding="ascii") as handle:
+                    return max(0, min(100, int(handle.read().strip())))
+            except (OSError, ValueError):
+                continue
+        return self._gpu_nvidia()
+
+    @staticmethod
+    def _gpu_nvidia():
+        if not shutil.which("nvidia-smi"):
+            return None
+        try:
+            options = {"capture_output": True, "text": True, "timeout": 4}
+            if IS_WINDOWS:
+                options["creationflags"] = 0x08000000
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+                **options,
+            )
+            first = result.stdout.strip().splitlines()[0]
+            return max(0, min(100, int(first.strip())))
+        except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+            return None
+
+    def snapshot(self):
+        return [("CPU", self.cpu()), ("RAM", self.ram()), ("GPU", self.gpu())]
+
+
+# ------------------------------------------------------------------------ geometry
+
+def anchored_position(area, width, height, anchor, margin=MARGIN):
+    """Top-left corner for a box of `width`x`height` inside (x, y, w, h)."""
+    x0, y0, area_w, area_h = area
+    vertical, horizontal = anchor.split("-", 1)
+    x = {
+        "left": x0 + margin,
+        "center": x0 + (area_w - width) // 2,
+        "right": x0 + area_w - width - margin,
+    }[horizontal]
+    y = {
+        "top": y0 + margin,
+        "middle": y0 + (area_h - height) // 2,
+        "bottom": y0 + area_h - height - margin,
+    }[vertical]
+    return x, y
+
+
+def clamp_to_area(x, y, width, height, area, margin=MARGIN, seams=(False, False, False, False)):
+    """Keep a box inside an area; shared edges get `margin`, outer ones may be flush."""
+    x0, y0, area_w, area_h = area
+    left, right, top, bottom = seams
+    min_x = x0 + (margin if left else 0)
+    max_x = x0 + area_w - width - (margin if right else 0)
+    if max_x < min_x:
+        min_x, max_x = x0, x0 + area_w - width
+    min_y = y0 + (margin if top else 0)
+    max_y = y0 + area_h - height - (margin if bottom else 0)
+    if max_y < min_y:
+        min_y, max_y = y0, y0 + area_h - height
+    return max(min_x, min(x, max_x)), max(min_y, min(y, max_y))
+
+
+def seam_edges(index, monitors):
+    """Which sides of monitor `index` touch another monitor.
+
+    `monitors` is a list of (x, y, width, height) tuples.
+    """
+    if index >= len(monitors):
+        return (False, False, False, False)
+    x, y, width, height = monitors[index]
+    left = right = top = bottom = False
+    for other_index, (ox, oy, ow, oh) in enumerate(monitors):
+        if other_index == index:
+            continue
+        overlaps_y = not (oy + oh <= y or oy >= y + height)
+        overlaps_x = not (ox + ow <= x or ox >= x + width)
+        if overlaps_y and ox + ow == x:
+            left = True
+        if overlaps_y and ox == x + width:
+            right = True
+        if overlaps_x and oy + oh == y:
+            top = True
+        if overlaps_x and oy == y + height:
+            bottom = True
+    return (left, right, top, bottom)
+
+
+# --------------------------------------------------------------------------- icons
+
+ICON_FILES = {
+    "anthropic": "claude.svg", "anthropic_api": "anthropic.svg",
+    "openai": "openai.svg", "copilot": "copilot.svg", "zai": "zhipu.svg",
+    "openrouter": "openrouter.svg", "deepseek": "deepseek.svg",
+    "kimi": "kimi.svg", "kilo": "kilo.svg", "novita": "novita.svg",
+    "moonshot": "moonshot.svg", "grok": "grok.svg",
+    "supergrok": "grok.svg", "grokbot": "grokbot.svg",
+    "antigravity": "antigravity.svg", "cursor": "cursor.svg",
+    "minimax": "minimax.svg", "kiro": "kiro.svg", "nous": "nous.svg",
+    "opencode-go": "opencode.svg", "opencode_go": "opencode.svg",
+    "ollama": "ollama.svg", "droid": "droid.svg", "devin": "devin.svg",
+    "muse-code": "muse-code.svg",
+}
+
+BRAND_COLORS = {
+    "anthropic": "#d97757", "anthropic_api": "#d97757",
+    "google": "#4285f4", "gemini": "#4285f4", "antigravity": "#4285f4",
+    "deepseek": "#4d6bfe", "zhipu": "#3d7eff", "zai": "#3d7eff",
+    "minimax": "#e5484d", "moonshot": "#7c6cf5", "kimi": "#7c6cf5",
+}
+DEFAULT_ICON_TINT = "#e6e6ec"
+MONO_ICON_TINT = "#c3c8d2"
+TEXT_PRIMARY = "#e6e6ec"
+TEXT_MUTED = "rgba(230,230,236,0.66)"
+
+
+def icon_directories():
+    """Where provider marks may live: env override, next to the code, installed copies."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    directories = []
+    override = os.environ.get("VIGIA_ICON_DIR")
+    if override:
+        directories.append(override)
+    directories += [
+        os.path.join(here, "icons"),
+        os.path.join(here, "..", "share", "vigia", "icons"),
+        os.path.join(HOME, ".local", "share", "vigia", "icons"),
+        os.path.join(HOME, ".local", "share", "ai-usagebar", "tray", "icons"),
+    ]
+    return [os.path.abspath(directory) for directory in directories]
+
+
+def icon_path(brand):
+    filename = ICON_FILES.get(brand)
+    if not filename:
+        return None
+    for directory in icon_directories():
+        path = os.path.join(directory, filename)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def icon_tint(brand, style):
+    if style in ("mono", "alert"):
+        return MONO_ICON_TINT
+    return BRAND_COLORS.get(brand, DEFAULT_ICON_TINT)
+
+
+def value_tint(style, percent):
+    if style != "alert" or not isinstance(percent, (int, float)):
+        return TEXT_PRIMARY
+    if percent >= 80:
+        return "#ed4b48"
+    if percent >= 60:
+        return "#f2bd34"
+    return TEXT_PRIMARY
