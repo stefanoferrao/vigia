@@ -99,6 +99,15 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(again.get("language"), "en")
                 self.assertEqual(again.positions["screen"], (12, 34))
 
+    def test_screen_names_are_valid_monitors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "vigia.toml")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write('[overlay]\nmonitor = "HDMI-A-0"\n')
+            with mock.patch.object(core, "LEGACY_CONFIG", os.path.join(directory, "missing.toml")):
+                config = core.Config(path)
+            self.assertEqual(config.get("monitor"), "HDMI-A-0")
+
     def test_invalid_values_are_repaired(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "vigia.toml")

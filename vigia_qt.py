@@ -387,6 +387,8 @@ class Pill(QWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.drag_offset = event.globalPosition().toPoint() - self.pos()
+            self.drag_origin = event.globalPosition().toPoint()
+            self.drag_started = False
             event.accept()
         elif event.button() == Qt.RightButton:
             self.app.popup_menu(self)
@@ -396,6 +398,11 @@ class Pill(QWidget):
 
     def mouseMoveEvent(self, event):
         if self.drag_offset is not None:
+            if not self.drag_started:
+                delta = event.globalPosition().toPoint() - self.drag_origin
+                if abs(delta.x()) < 3 and abs(delta.y()) < 3:
+                    return
+                self.drag_started = True
             self.move(event.globalPosition().toPoint() - self.drag_offset)
             event.accept()
         else:
@@ -403,8 +410,11 @@ class Pill(QWidget):
 
     def mouseReleaseEvent(self, event):
         if self.drag_offset is not None:
+            moved = self.drag_started
             self.drag_offset = None
-            self.app.remember_position(self)
+            self.drag_started = False
+            if moved:
+                self.app.remember_position(self)
             event.accept()
         else:
             super().mouseReleaseEvent(event)
@@ -520,16 +530,25 @@ class VigIA(QObject):
 
     def monitor_indices(self):
         count = len(self.screens())
-        choice = self.config.get("monitor")
+        choice = str(self.config.get("monitor"))
         if choice == "all":
             return list(range(count))
         if choice == "secondary":
             primary = self.primary_index()
             others = [index for index in range(count) if index != primary]
             return others[:1] or [primary]
-        if choice.isdigit():
+        if choice.isdigit():  # legacy config: index -> screen name
             index = int(choice)
-            return [index] if index < count else [0]
+            if index < count:
+                name = self.screens()[index].name()
+                if name:
+                    self.config.set("monitor", name)
+                    return [index]
+            return [self.primary_index()]
+        for index, screen in enumerate(self.screens()):
+            if screen.name() == choice:
+                return [index]
+        core.log(f"monitor {choice!r} not found; using primary")
         return [self.primary_index()]
 
     def effective_alpha(self, hovered=False):
@@ -645,8 +664,9 @@ class VigIA(QObject):
         options = [("primary", self.config.t("monitor_primary")),
                    ("secondary", self.config.t("monitor_secondary")),
                    ("all", self.config.t("monitor_all"))]
-        for index, _screen in enumerate(self.screens()):
-            options.append((str(index), self.config.t("monitor_screen", n=index + 1)))
+        for index, screen in enumerate(self.screens()):
+            options.append((screen.name() or str(index),
+                            self.config.t("monitor_screen", n=index + 1)))
         for key, label in options:
             action = QAction(label, monitor_menu)
             action.setCheckable(True)
@@ -769,15 +789,24 @@ class VigIA(QObject):
             window.place(force=True)
 
     def remember_position(self, window):
-        area = window.screen.availableGeometry()
-        point = window.pos()
-        x, y = core.clamp_to_area(point.x(), point.y(), window.width(), window.height(),
+        point = window.frameGeometry().center()
+        screen = QGuiApplication.screenAt(point) or window.screen
+        area = screen.availableGeometry()
+        index = self.screens().index(screen) if screen in self.screens() else 0
+        x, y = core.clamp_to_area(window.x(), window.y(), window.width(), window.height(),
                                   (area.x(), area.y(), area.width(), area.height()),
-                                  core.MARGIN, core.seam_edges(window.screen_index, self.screen_geometries()))
-        if (x, y) != (point.x(), point.y()):
+                                  core.MARGIN, core.seam_edges(index, self.screen_geometries()))
+        if (x, y) != (window.x(), window.y()):
             window.move(x, y)
+        if index != window.screen_index:
+            # the pill changed screens: remember it there and keep following that one
+            window.screen_index = index
+            window.screen = screen
+            if str(self.config.get("monitor")) != "all":
+                self.config.set("monitor", screen.name() or str(index))
         self.config.positions[window.key()] = (x - area.x(), y - area.y())
         self.config.save()
+        core.log(f"moved to {screen.name()} at {x},{y}")
 
     # -- visibility ----------------------------------------------------------
     def hide_all(self):

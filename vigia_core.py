@@ -14,7 +14,7 @@ import tomllib
 from datetime import datetime
 
 APP_NAME = "VigIA"
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 IS_WINDOWS = platform.system() == "Windows"
 HOME = os.path.expanduser("~")
 MARGIN = 18
@@ -316,11 +316,9 @@ class Config:
             self.values["size"] = DEFAULTS["size"]
         if self.values["icon_style"] not in ("brand", "mono", "alert"):
             self.values["icon_style"] = DEFAULTS["icon_style"]
-        if self.values["monitor"] not in ("primary", "secondary", "all"):
-            try:
-                self.values["monitor"] = str(int(self.values["monitor"]))
-            except (TypeError, ValueError):
-                self.values["monitor"] = DEFAULTS["monitor"]
+        # "primary" / "secondary" / "all" or a screen name (also legacy indexes)
+        if not str(self.values["monitor"]).strip():
+            self.values["monitor"] = DEFAULTS["monitor"]
         if self.values["anchor"] not in ANCHORS:
             self.values["anchor"] = DEFAULTS["anchor"]
         if self.values["language"] not in STRINGS and self.values["language"] != "auto":
