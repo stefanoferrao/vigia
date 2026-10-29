@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: Graphite
-description: "Cinza neutro puro, sem matiz, acento azul-ceu para foco."
+description: "Cinza neutro puro, sem matiz, com acento azul-céu para o foco."
 colors:
   surface: "#121212"
   surface-border: "#2b2d2e"

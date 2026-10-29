@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: Mono High Contrast
-description: "Preto e branco com bordas fortes e estados distinguiveis sem depender so de cor; AAA."
+description: "Preto e branco com bordas fortes e estados distinguíveis sem depender só da cor (AAA)."
 colors:
   surface: "#000000"
   surface-border: "#ffffff"

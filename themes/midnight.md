@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: Midnight
-description: "Azul-noite profundo com acento indigo; foco em longas sessoes noturnas."
+description: "Azul-noite profundo com acento índigo, pensado para longas sessões noturnas."
 colors:
   surface: "#0b0d14"
   surface-border: "#23283a"

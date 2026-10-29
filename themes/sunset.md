@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: Sunset
-description: "Marrom quente com acento terracota e ambar."
+description: "Marrom quente com acento terracota e âmbar."
 colors:
   surface: "#231e1a"
   surface-border: "#3f3a36"

@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: Light
-description: "Pilula clara de papel, texto tinta, estados escurecidos para AA sobre branco."
+description: "Pílula clara de papel, texto tinta e estados escurecidos para contraste AA sobre branco."
 colors:
   surface: "#fafafa"
   surface-border: "#dcdce0"

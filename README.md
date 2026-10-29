@@ -169,7 +169,9 @@ Nada sai da sua máquina além das chamadas que o `ai-usagebar` já faz.
 ```
 vigia            launcher (Python)
 vigia_qt.py      interface Qt — a mesma nos dois sistemas
-vigia_core.py    dados, config, idiomas, métricas
+vigia_core.py    dados, config, idiomas, temas, métricas
+DESIGN.md        tema padrão (formato DESIGN.md)
+themes/          temas extras: Midnight, Graphite, Light, Aurora, Sunset, Mono HC
 icons/           marcas dos provedores (SVG)
 assets/          ícone do app e engrenagem
 tests/           testes do núcleo e smoke do Qt

@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VigIA — o uso dos seus agentes de IA, de relance</title>
-<meta name="description" content="Pílula flutuante para Linux e Windows com o consumo de cada agente de IA: Claude, Codex, OpenCode e mais. Modo ilha no topo da tela, atalho global e escolha do limite por provedor.">
+<meta name="description" content="Pílula flutuante para Linux e Windows com o consumo de cada agente de IA: Claude, Codex, OpenCode e mais. Modo ilha, sete temas no formato DESIGN.md, barras de uso, atalho global e escolha do limite por provedor.">
 <meta property="og:title" content="VigIA — o uso dos seus agentes de IA, de relance">
-<meta property="og:description" content="Uma pílula flutuante com o consumo de cada agente de IA. Instalação em 2 comandos.">
+<meta property="og:description" content="Uma pílula flutuante com o consumo de cada agente de IA, sete temas DESIGN.md e instalação em 2 comandos.">
 <meta property="og:type" content="website">
 <link rel="icon" href="assets/vigia.svg" type="image/svg+xml">
 <meta name="theme-color" id="themeColor" content="#f6f7fa">
@@ -18,6 +18,7 @@
     var dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     var theme = saved === "light" || saved === "dark" ? saved : (dark ? "dark" : "light");
     document.documentElement.dataset.theme = theme;
+    document.documentElement.classList.add("js");
   })();
 </script>
 <style>
@@ -25,7 +26,7 @@
   :root {
     color-scheme: light;
     --bg: #f6f7fa;
-    --bg-soft: #ffffff;
+    --bg-soft: #fafafa;
     --surface: #ffffff;
     --surface-2: #eef0f4;
     --line: rgba(17, 20, 32, .10);
@@ -33,13 +34,15 @@
     --text: #14161c;
     --muted: #555c6c;
     --muted-2: #7a8291;
-    --accent: #3352cf;
-    --accent-soft: rgba(51, 82, 207, .10);
-    --accent-line: rgba(51, 82, 207, .45);
+    --accent: #0066cc;
+    --accent-soft: rgba(0, 102, 204, .10);
+    --accent-line: rgba(0, 102, 204, .45);
     --code-inline-bg: rgba(17, 20, 32, .055);
-    --green: #158a5b;
-    --amber: #f0b45c;
-    --red: #ff7a6b;
+    --green: #0b7a4b;
+    /* Estados da pílula (tokens do DESIGN.md "VigIA Dark"): a pílula é escura nos dois temas. */
+    --ok: #4cc38a;
+    --warn: #f2bd34;
+    --crit: #ff6b68;
     --glow: rgba(88, 112, 200, .16);
     --header-bg: rgba(246, 247, 250, .82);
     --card-a: #ffffff;
@@ -81,12 +84,12 @@
     --text: #e9eaef;
     --muted: #9ba1ae;
     --muted-2: #6f7583;
-    --accent: #8aa6ff;
-    --accent-soft: rgba(138, 166, 255, .12);
-    --accent-line: rgba(138, 166, 255, .45);
+    --accent: #8b93ff;
+    --accent-soft: rgba(139, 147, 255, .13);
+    --accent-line: rgba(139, 147, 255, .48);
     --code-inline-bg: rgba(255, 255, 255, .07);
-    --green: #63d6a0;
-    --glow: rgba(90, 116, 200, .22);
+    --green: #4cc38a;
+    --glow: rgba(110, 120, 230, .22);
     --header-bg: rgba(10, 11, 15, .72);
     --card-a: rgba(255, 255, 255, .045);
     --card-b: rgba(255, 255, 255, .015);
@@ -236,6 +239,25 @@
   .pill.open .row, .pill:focus-visible .row { opacity: 1; }
   .pill .row img { width: 15px; height: 15px; display: block; }
   .pill .row .num { min-width: 42px; text-align: left; font-variant-numeric: tabular-nums; }
+  /* Número + barra fina de uso, como no app: a cor segue o estado, o crítico respira. */
+  .val {
+    position: relative; min-width: 42px; text-align: left;
+    font-variant-numeric: tabular-nums; color: var(--c, inherit);
+    padding-bottom: 5px; margin-bottom: -5px;
+  }
+  .val::before, .val::after {
+    content: ""; position: absolute; left: 0; bottom: 0; height: 2px; border-radius: 1px;
+  }
+  .val::before { width: calc(100% - 2px); background: var(--track, var(--pill-line)); }
+  .val::after {
+    width: calc((100% - 2px) * var(--p, 0) / 100); background: var(--c, currentColor);
+    transition: width .5s cubic-bezier(.22, 1, .36, 1);
+  }
+  .val.ok { --c: var(--ok); }
+  .val.warn { --c: var(--warn); }
+  .val.crit { --c: var(--crit); animation: breath 2s ease-in-out infinite; }
+  @keyframes breath { 0%, 100% { opacity: 1; } 50% { opacity: .65; } }
+  .pill .row .sys b.val { color: var(--c); }
   .pill .row .item { display: flex; align-items: center; gap: 6px; }
   .pill .row .item + .item { margin-left: 16px; }
   .pill .row .sep { width: 1px; height: 16px; background: var(--pill-line); margin: 0 20px; }
@@ -244,8 +266,97 @@
   .pill .row .sys b { color: var(--pill-text); font-weight: 650; }
   .pill .row .gear { margin-left: 20px; opacity: .55; }
   .hint { color: var(--muted-2); font-size: 12.5px; margin-top: 6px; }
-  .pill .row .red { color: #ff7a6b; }
-  .pill .row .amber { color: #f0b45c; }
+
+  .announce {
+    display: flex; width: fit-content; align-items: center; gap: 10px; margin: 0 auto 22px;
+    padding: 5px 14px 5px 6px; border-radius: 999px; font-size: 13px; color: var(--muted);
+    border: 1px solid var(--line-strong); background: var(--gh-bg);
+    transition: border-color .2s ease, background .2s ease, color .2s ease;
+  }
+  .announce b {
+    background: var(--accent-soft); color: var(--accent); border-radius: 999px;
+    padding: 2px 10px; font-weight: 600; font-size: 12px; letter-spacing: .02em;
+  }
+  .announce:hover { text-decoration: none; color: var(--text); border-color: var(--accent-line); }
+  .announce span { transition: transform .2s ease; }
+  .announce:hover span { transform: translateX(3px); }
+
+  /* Entrada suave ao rolar: só se o JS rodou, e nunca com movimento reduzido. */
+  .js .reveal { opacity: 0; transform: translateY(12px);
+    transition: opacity .6s cubic-bezier(.22, 1, .36, 1), transform .6s cubic-bezier(.22, 1, .36, 1); }
+  .js .reveal.in { opacity: 1; transform: none; }
+  .card { transition: border-color .25s ease, transform .25s ease, box-shadow .25s ease; }
+  .card:hover { border-color: var(--accent-line); box-shadow: 0 14px 34px -22px var(--accent-line); transform: translateY(-2px); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+
+  /* ---------------------------------------------------------------- temas */
+  .themes { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, .75fr); gap: 18px; align-items: stretch; }
+  @media (max-width: 920px) { .themes { grid-template-columns: 1fr; } }
+  .tpicker { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+  .tchip {
+    display: inline-flex; align-items: center; gap: 9px;
+    border: 1px solid var(--line-strong); background: transparent; color: var(--muted);
+    border-radius: 999px; padding: 7px 14px 7px 8px; font: inherit; font-size: 13px; cursor: pointer;
+    transition: border-color .2s ease, background .2s ease, color .2s ease;
+  }
+  .tchip:hover { color: var(--text); background: var(--ghost-hover); }
+  .tchip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-line); color: var(--text); }
+  .tchip i { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line-strong);
+    background: linear-gradient(135deg, var(--s) 0 50%, var(--p) 50% 100%); }
+  .tstage {
+    position: relative; overflow: hidden; border-radius: var(--radius); border: 1px solid var(--line);
+    min-height: 300px; padding: 28px 20px; display: grid; place-content: center; gap: 28px; justify-items: center;
+    background:
+      radial-gradient(60% 90% at 15% 10%, #4a5fd0aa, transparent 60%),
+      radial-gradient(60% 90% at 90% 90%, #d1686bb0, transparent 60%),
+      linear-gradient(135deg, #1d2547, #3b2a52);
+  }
+  .tpill {
+    display: flex; align-items: center; gap: 6px; max-width: 100%; overflow-x: auto;
+    padding: 9px 18px 9px 14px; border-radius: 999px; white-space: nowrap;
+    background: var(--tp-surface); border: 1px solid var(--tp-border);
+    color: var(--tp-text); font-size: 13.5px; font-weight: 650; letter-spacing: -.01em;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, .06) inset, 0 18px 32px -14px rgba(0, 0, 0, .65);
+    transition: background .35s ease, border-color .25s ease, color .35s ease;
+    scrollbar-width: none;
+  }
+  .tpill:hover { border-color: var(--tp-primary); }
+  .tpill .item { display: flex; align-items: center; gap: 6px; }
+  .tpill .item + .item { margin-left: 16px; }
+  .tpill .ico { width: 15px; height: 15px; background: var(--tp-muted); flex: none;
+    -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat;
+    transition: background .35s ease; }
+  .tpill .val { --track: var(--tp-divider); }
+  .tpill .val.ok { --c: var(--tp-ok); }
+  .tpill .val.warn { --c: var(--tp-warn); }
+  .tpill .val.crit { --c: var(--tp-crit); }
+  .tpill .sep { width: 1px; height: 16px; background: var(--tp-divider); margin: 0 18px; }
+  .tpill .sys { display: flex; align-items: center; gap: 6px; color: var(--tp-muted); font-weight: 500; }
+  .tpill .sys + .sys { margin-left: 14px; }
+  .tmenu {
+    width: 224px; padding: 5px; border-radius: 10px; font-size: 13px;
+    background: var(--tp-menu); border: 1px solid var(--tp-menu-border); color: var(--tp-text);
+    box-shadow: 0 18px 36px -14px rgba(0, 0, 0, .7);
+    transition: background .35s ease, border-color .35s ease, color .35s ease;
+  }
+  .tmenu div { padding: 5px 12px; border-radius: 6px; display: flex; justify-content: space-between; gap: 12px; }
+  .tmenu div + div { margin-top: 1px; }
+  .tmenu .on { background: var(--tp-hover); }
+  .tmenu .off { color: var(--tp-disabled); }
+  .tmenu .acc { color: var(--tp-primary); font-weight: 600; }
+  .tmeta { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .tmeta h3 { margin: 0; font-size: 18px; font-weight: 640; letter-spacing: -.01em; }
+  .tmeta p { margin: 0; color: var(--muted); font-size: 14px; }
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .swatches li { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); min-width: 0; }
+  .swatches i { flex: none; width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--line-strong); }
+  .swatches span { display: block; line-height: 1.25; min-width: 0; }
+  .swatches b { display: block; color: var(--text); font-weight: 560; font-family: var(--mono); font-size: 11px; }
+  .accent-pick { display: flex; align-items: center; gap: 12px; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  .accent-pick input { width: 36px; height: 28px; padding: 0; border: 1px solid var(--line-strong); border-radius: 7px; background: transparent; cursor: pointer; }
+  .accent-pick button { margin-left: auto; font: inherit; font-size: 12.5px; color: var(--muted); background: transparent; border: 1px solid var(--line-strong); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+  .accent-pick button:hover { color: var(--text); background: var(--ghost-hover); }
+  .tcode { margin-top: 18px; }
 
   /* --------------------------------------------------------------- section */
   section { padding: 72px 0; border-top: 1px solid var(--line); }
@@ -385,6 +496,7 @@
     <nav>
       <a href="#funciona">Como funciona</a>
       <a href="#veja">Veja</a>
+      <a href="#temas">Temas</a>
       <a href="#instalar">Instalar</a>
       <a href="#limites">Limites</a>
       <a href="#config">Config</a>
@@ -409,6 +521,7 @@
 <main>
 
 <div class="wrap hero">
+  <a class="announce" href="#temas"><b>Novo na 2.5</b> Sete temas DESIGN.md, barras de uso e cor de realce <span aria-hidden="true">→</span></a>
   <div class="eyebrow">Linux <span></span> Windows <span></span> software livre</div>
   <h1>Quanto do seu limite de IA já foi, de relance.</h1>
   <p class="lede">
@@ -421,13 +534,13 @@
     <div class="pill" id="heroPill" role="button" tabindex="0"
          aria-label="Pílula do VigIA. Passe o mouse ou pressione Enter para abrir.">
       <div class="row">
-        <span class="item"><img src="assets/claude.svg" alt="Claude"><span class="num red">100%</span></span>
-        <span class="item"><img src="assets/openai.svg" alt="Codex"><span class="num">50%</span></span>
-        <span class="item"><img src="assets/opencode.svg" alt="OpenCode"><span class="num red">100%</span></span>
+        <span class="item"><img src="assets/claude.svg" alt="Claude"><span class="val crit" style="--p:100">100%</span></span>
+        <span class="item"><img src="assets/openai.svg" alt="Codex"><span class="val ok" style="--p:50">50%</span></span>
+        <span class="item"><img src="assets/opencode.svg" alt="OpenCode"><span class="val crit" style="--p:100">100%</span></span>
         <span class="sep" aria-hidden="true"></span>
-        <span class="sys">CPU <b>5%</b></span>
-        <span class="sys">RAM <b>32%</b></span>
-        <span class="sys">GPU <b>0%</b></span>
+        <span class="sys">CPU <b class="val ok" style="--p:5">5%</b></span>
+        <span class="sys">RAM <b class="val ok" style="--p:32">32%</b></span>
+        <span class="sys">GPU <b class="val ok" style="--p:0">0%</b></span>
       </div>
     </div>
   </div>
@@ -437,44 +550,54 @@
     <a class="btn btn-primary" href="#instalar">Instalar agora</a>
     <a class="btn btn-ghost" href="https://github.com/stefanoferrao/vigia" target="_blank" rel="noopener">Ver no GitHub</a>
   </div>
-  <small>Python 3.11+ · PySide6 · MIT · instalação em dois comandos</small>
+  <small>v2.5.0 · Python 3.11+ · PySide6 · MIT · instalação em dois comandos</small>
 </div>
 
 <section id="funciona">
   <div class="wrap">
-    <div class="sect-head">
+    <div class="sect-head reveal">
       <div class="kicker">Como funciona</div>
       <h2>Uma linha, sempre à vista.</h2>
       <p>Ícone do provedor e porcentagem do limite, com espaçamento em três níveis: dentro
       do item, entre itens e entre o bloco de IA e o de sistema.</p>
     </div>
     <div class="cards">
-      <article class="card">
+      <article class="card reveal">
         <h3>Largura estável</h3>
         <p>Os números ficam alinhados dentro de um slot fixo, então a pílula não dança
         quando o uso oscila.</p>
       </article>
-      <article class="card">
+      <article class="card reveal">
         <h3>Nove encaixes</h3>
         <p>Topo, meio ou base — à esquerda, no centro ou à direita. Ou arraste livre: a
         posição fica salva por monitor.</p>
       </article>
-      <article class="card">
+      <article class="card reveal">
         <h3>Modo ilha</h3>
         <p>Uma faixa de <code>120×8</code> no topo da tela, estilo Dynamic Island: abre no
         hover, recolhe em 0,4&nbsp;s e fixa com um clique.</p>
       </article>
-      <article class="card">
+      <article class="card reveal">
         <h3>O que vigiar</h3>
         <p>Por provedor: sessão de 5&nbsp;h, semanal, mensal ou um limite do próprio plano,
         como o <code>Fable (7d)</code> do Claude.</p>
       </article>
-      <article class="card">
+      <article class="card reveal">
         <h3>Alerta por uso</h3>
-        <p>Com <code>icon_style = "alert"</code> os números ficam âmbar e depois vermelhos,
-        nos limites que você definir.</p>
+        <p>Com <code>icon_style = "alert"</code> os números ficam verdes, âmbar e depois
+        vermelhos, nos limites que você definir. O crítico respira devagar.</p>
       </article>
-      <article class="card">
+      <article class="card reveal">
+        <h3>Barra de uso</h3>
+        <p>Um traço de 2&nbsp;px sob cada número mostra o quanto do limite já foi, e a
+        cor muda com suavidade quando o estado muda.</p>
+      </article>
+      <article class="card reveal">
+        <h3>Temas DESIGN.md</h3>
+        <p>Sete temas prontos, tema automático claro/escuro e <b>cor de realce</b> à sua
+        escolha. Crie o seu editando um arquivo de texto.</p>
+      </article>
+      <article class="card reveal">
         <h3>CPU, RAM e GPU</h3>
         <p>Opcionais e desligados por padrão. Quando ligados, ficam num bloco separado à
         direita da linha.</p>
@@ -485,7 +608,7 @@
 
 <section id="veja">
   <div class="wrap">
-    <div class="sect-head">
+    <div class="sect-head reveal">
       <div class="kicker">Veja funcionando</div>
       <h2>Discreto fechado, completo aberto.</h2>
       <p>Capturas reais do app rodando — a pílula, o menu e a escolha do limite.</p>
@@ -507,17 +630,80 @@
         </ul>
       </div>
       <figure>
-        <img class="shot" src="assets/menu.png" alt="Menu de configurações do VigIA, com os submenus de transparência, tamanho, ícones, itens, limites, monitor, posição e idioma" width="601" height="509">
-        <figcaption><b>Menu completo.</b> Engrenagem ou botão direito. Os submenus ficam
-        abertos enquanto você ajusta.</figcaption>
+        <img class="shot" src="assets/menu.png" alt="Pílula com barras de uso e o menu de configurações do VigIA aberto, com o submenu Tema listando os sete temas e a cor de realce" width="639" height="725" loading="lazy" decoding="async">
+        <figcaption><b>Menu completo.</b> Engrenagem ou botão direito: tema, ícones, barras, pulso e
+        mais. Os submenus ficam abertos enquanto você ajusta.</figcaption>
       </figure>
     </div>
   </div>
 </section>
 
-<section id="instalar">
+<section id="temas">
   <div class="wrap">
     <div class="sect-head">
+      <div class="kicker">Temas</div>
+      <h2>Sete visuais, um formato aberto.</h2>
+      <p>Cada tema é um arquivo <a href="https://github.com/google-labs-code/design.md" target="_blank" rel="noopener">DESIGN.md</a>:
+      cores, estados e superfícies num texto simples que você edita e valida. Troque pelo
+      menu, ou deixe o <b>Automático</b> seguir o claro/escuro do sistema.</p>
+    </div>
+    <div class="tpicker" id="tPicker" role="group" aria-label="Escolha um tema"></div>
+    <div class="themes">
+      <div class="tstage reveal" id="tStage">
+        <div class="tpill" id="tPill" aria-label="Pré-visualização da pílula no tema escolhido">
+          <span class="item"><span class="ico" style="--icon:url(assets/claude.svg)"></span><span class="val ok" style="--p:42">42%</span></span>
+          <span class="item"><span class="ico" style="--icon:url(assets/openai.svg)"></span><span class="val warn" style="--p:65">65%</span></span>
+          <span class="item"><span class="ico" style="--icon:url(assets/opencode.svg)"></span><span class="val crit" style="--p:91">91%</span></span>
+          <span class="sep" aria-hidden="true"></span>
+          <span class="sys">CPU <b class="val ok" style="--p:12">12%</b></span>
+          <span class="sys">RAM <b class="val warn" style="--p:67">67%</b></span>
+        </div>
+        <div class="tmenu" aria-hidden="true">
+          <div>Transparência <span>›</span></div>
+          <div class="on">Tema <span class="acc">●</span></div>
+          <div>Ícones <span>›</span></div>
+          <div class="off">Atalho: Ctrl+Alt+V</div>
+        </div>
+      </div>
+      <div class="tmeta reveal">
+        <h3 id="tName">VigIA Dark</h3>
+        <p id="tDesc"></p>
+        <ul class="swatches" id="tSwatches"></ul>
+        <label class="accent-pick">Cor de realce
+          <input type="color" id="tAccent" value="#8b93ff" aria-label="Cor de realce">
+          <button type="button" id="tAccentReset">padrão</button>
+        </label>
+      </div>
+    </div>
+    <details class="tcode">
+      <summary>Criar o seu: um arquivo <code>~/.config/vigia/themes/meu-tema.md</code></summary>
+<pre>---
+version: alpha
+name: Meu tema
+colors:
+  surface: "#141418"        # fundo da pílula
+  surface-border: "#2a2a30"
+  text-primary: "#e6e6ec"
+  text-secondary: "#9f9fa4"
+  divider: "#33343a"
+  state-ok: "#4cc38a"       # abaixo do alerta
+  state-warning: "#f2bd34"
+  state-critical: "#ff6b68"
+  primary: "#8b93ff"        # realce: borda no hover, barras
+  menu-surface: "#24252b"
+  menu-border: "#3a3b42"
+  menu-hover: "#3a3b42"
+---
+
+# valide antes de usar:
+npx @google/design.md lint meu-tema.md</pre>
+    </details>
+  </div>
+</section>
+
+<section id="instalar">
+  <div class="wrap">
+    <div class="sect-head reveal">
       <div class="kicker">Instalação</div>
       <h2>Dois comandos e a pílula aparece.</h2>
       <p>O instalador cria um ambiente Python privado, baixa o PySide6 e registra o app no
@@ -598,7 +784,7 @@ cd vigia && ./install.sh">copiar</button></div>
 
 <section id="limites">
   <div class="wrap">
-    <div class="sect-head">
+    <div class="sect-head reveal">
       <div class="kicker">O que vigiar</div>
       <h2>Cada provedor mostra o limite que importa para você.</h2>
       <p>O padrão é o maior uso. No menu, escolha a janela de cada provedor — a escolha
@@ -631,7 +817,7 @@ cd vigia && ./install.sh">copiar</button></div>
 
 <section id="dia">
   <div class="wrap">
-    <div class="sect-head">
+    <div class="sect-head reveal">
       <div class="kicker">No dia a dia</div>
       <h2>Teclado e terminal.</h2>
     </div>
@@ -651,7 +837,7 @@ cd vigia && ./install.sh">copiar</button></div>
 
 <section id="config">
   <div class="wrap">
-    <div class="sect-head">
+    <div class="sect-head reveal">
       <div class="kicker">Configuração</div>
       <h2>Tudo em um TOML.</h2>
       <p>O menu grava no arquivo; edições manuais são aplicadas com
@@ -673,6 +859,10 @@ refresh_minutes = 5     # 1 a 60
 max_providers = 4       # 1 a 8
 hotkey = "&lt;Control&gt;&lt;Alt&gt;v"
 language = "auto"       # auto | pt | en | es | fr | de
+theme = "vigia"         # vigia | auto | midnight | graphite | light | aurora | sunset | mono-hc
+accent = ""             # "#rrggbb": troca a cor de realce do tema
+bars = true             # barra fina de uso sob cada número
+pulse = true            # valor crítico respira (icon_style = "alert")
 alert_warn = 60
 alert_critical = 80
 hide_providers = ""     # "openai,gemini"
@@ -806,7 +996,7 @@ anthropic = "Weekly (7d)"
       miniNum.textContent = `${chip.dataset.percent}%`;
       miniLabel.textContent = chip.dataset.metric;
       const percent = Number(chip.dataset.percent);
-      miniNum.style.color = percent >= 80 ? "#ff7a6b" : percent >= 60 ? "#f0b45c" : "var(--pill-text)";
+      miniNum.style.color = percent >= 80 ? "var(--crit)" : percent >= 60 ? "var(--warn)" : "var(--ok)";
     });
   });
 
@@ -839,6 +1029,92 @@ anthropic = "Weekly (7d)"
     try { saved = localStorage.getItem("vigia-theme"); } catch (e) {}
     if (!saved) applyTheme(event.matches ? "dark" : "light", false);
   });
+
+  // ------------------------------------------------------------------ temas
+  /* Gerado a partir de DESIGN.md e themes/*.md */
+  const THEMES = [{"id":"vigia","name":"VigIA Dark","description":"Tema oficial: pílula grafite quase preta, texto frio e estados em verde, âmbar e vermelho dessaturados.","colors":{"surface":"#141418","surface-border":"#2a2a30","text-primary":"#e6e6ec","text-secondary":"#9f9fa4","text-disabled":"#898d98","divider":"#33343a","state-ok":"#4cc38a","state-warning":"#f2bd34","state-critical":"#ff6b68","primary":"#8b93ff","menu-surface":"#24252b","menu-border":"#3a3b42","menu-hover":"#3a3b42"}},{"id":"aurora","name":"Aurora","description":"Preto esverdeado com acento verde-esmeralda, inspirado em auroras.","colors":{"surface":"#101614","surface-border":"#25332e","text-primary":"#e9f2ee","text-secondary":"#9db1a8","text-disabled":"#768c82","divider":"#27352f","state-ok":"#3ecf8e","state-warning":"#ffdb13","state-critical":"#ff6a52","primary":"#3ecf8e","menu-surface":"#18211e","menu-border":"#2a3a34","menu-hover":"#26352f"}},{"id":"graphite","name":"Graphite","description":"Cinza neutro puro, sem matiz, com acento azul-céu para o foco.","colors":{"surface":"#121212","surface-border":"#2b2d2e","text-primary":"#f4f4f6","text-secondary":"#a3a5a8","text-disabled":"#848689","divider":"#2e3031","state-ok":"#59d499","state-warning":"#ffc533","state-critical":"#ff6161","primary":"#57c1ff","menu-surface":"#1c1c1d","menu-border":"#303233","menu-hover":"#2f3132"}},{"id":"light","name":"Light","description":"Pílula clara de papel, texto tinta e estados escurecidos para contraste AA sobre branco.","colors":{"surface":"#fafafa","surface-border":"#dcdce0","text-primary":"#171717","text-secondary":"#5c5f66","text-disabled":"#73757b","divider":"#e3e3e6","state-ok":"#0b7a4b","state-warning":"#8a5300","state-critical":"#c50000","primary":"#0066cc","menu-surface":"#ffffff","menu-border":"#dcdce0","menu-hover":"#ececf0"}},{"id":"midnight","name":"Midnight","description":"Azul-noite profundo com acento índigo, pensado para longas sessões noturnas.","colors":{"surface":"#0b0d14","surface-border":"#23283a","text-primary":"#eef0f8","text-secondary":"#9aa1b8","text-disabled":"#7c829c","divider":"#252a3c","state-ok":"#47c98f","state-warning":"#f0b93a","state-critical":"#ff6a6a","primary":"#828fff","menu-surface":"#141826","menu-border":"#262c44","menu-hover":"#262c44"}},{"id":"mono-hc","name":"Mono High Contrast","description":"Preto e branco com bordas fortes e estados distinguíveis sem depender só da cor (AAA).","colors":{"surface":"#000000","surface-border":"#ffffff","text-primary":"#ffffff","text-secondary":"#d0d0d0","text-disabled":"#a0a0a0","divider":"#8c8c8c","state-ok":"#7dffb2","state-warning":"#ffe066","state-critical":"#ff8a8a","primary":"#66d9ff","menu-surface":"#000000","menu-border":"#ffffff","menu-hover":"#2b2b2b"}},{"id":"sunset","name":"Sunset","description":"Marrom quente com acento terracota e âmbar.","colors":{"surface":"#231e1a","surface-border":"#3f3a36","text-primary":"#f7f1ea","text-secondary":"#b3a79b","text-disabled":"#9c9186","divider":"#403a35","state-ok":"#6fc486","state-warning":"#e8a55a","state-critical":"#ef6a5a","primary":"#e08a6a","menu-surface":"#2f2924","menu-border":"#4a423b","menu-hover":"#453d36"}}];
+  const stage = document.getElementById("tStage");
+  const picker = document.getElementById("tPicker");
+  const accentInput = document.getElementById("tAccent");
+  const swatches = document.getElementById("tSwatches");
+  const LABELS = [
+    ["surface", "fundo"], ["surface-border", "borda"], ["text-primary", "texto"],
+    ["text-secondary", "texto 2"], ["divider", "divisor"], ["state-ok", "normal"],
+    ["state-warning", "alerta"], ["state-critical", "crítico"], ["primary", "realce"],
+    ["menu-surface", "menu"],
+  ];
+  let current = THEMES[0];
+  let accent = null;
+
+  const paintTheme = () => {
+    const c = current.colors;
+    const set = (name, value) => stage.style.setProperty(name, value);
+    set("--tp-surface", c["surface"]); set("--tp-border", c["surface-border"]);
+    set("--tp-text", c["text-primary"]); set("--tp-muted", c["text-secondary"]);
+    set("--tp-disabled", c["text-disabled"] || c["text-secondary"]);
+    set("--tp-divider", c["divider"]); set("--tp-ok", c["state-ok"]);
+    set("--tp-warn", c["state-warning"]); set("--tp-crit", c["state-critical"]);
+    set("--tp-primary", accent || c["primary"]);
+    set("--tp-menu", c["menu-surface"]); set("--tp-menu-border", c["menu-border"]);
+    set("--tp-hover", c["menu-hover"]);
+    document.getElementById("tName").textContent = current.name;
+    document.getElementById("tDesc").textContent = current.description;
+    swatches.replaceChildren(...LABELS.map(([key, label]) => {
+      const li = document.createElement("li");
+      const dot = document.createElement("i");
+      dot.style.background = key === "primary" && accent ? accent : c[key];
+      const text = document.createElement("span");
+      const hex = document.createElement("b");
+      hex.textContent = key === "primary" && accent ? accent : c[key];
+      text.append(label, hex);
+      li.append(dot, text);
+      return li;
+    }));
+    accentInput.value = (accent || c["primary"]).slice(0, 7);
+  };
+
+  const selectTheme = (theme) => {
+    current = theme;
+    accent = null;
+    picker.querySelectorAll(".tchip").forEach((chip) =>
+      chip.setAttribute("aria-pressed", String(chip.dataset.id === theme.id)));
+    paintTheme();
+  };
+
+  THEMES.forEach((theme) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "tchip";
+    chip.dataset.id = theme.id;
+    chip.setAttribute("aria-pressed", "false");
+    const dot = document.createElement("i");
+    dot.style.setProperty("--s", theme.colors["surface"]);
+    dot.style.setProperty("--p", theme.colors["primary"]);
+    chip.append(dot, theme.name);
+    chip.addEventListener("click", () => selectTheme(theme));
+    picker.append(chip);
+  });
+  accentInput.addEventListener("input", () => { accent = accentInput.value; paintTheme(); });
+  document.getElementById("tAccentReset").addEventListener("click", () => { accent = null; paintTheme(); });
+  selectTheme(THEMES[0]);
+
+  // ------------------------------------------------------------ reveal on scroll
+  const reveals = [...document.querySelectorAll(".reveal")];
+  if ("IntersectionObserver" in window && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    const seen = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add("in");
+        seen.unobserve(entry.target);
+      });
+    }, { rootMargin: "0px 0px -8% 0px" });
+    reveals.forEach((node, index) => {
+      node.style.transitionDelay = `${(index % 3) * 70}ms`;
+      seen.observe(node);
+    });
+  } else {
+    reveals.forEach((node) => node.classList.add("in"));
+  }
 
   updateProgress();
 })();

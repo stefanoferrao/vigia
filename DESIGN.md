@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: VigIA Dark
-description: "Tema oficial: pilula grafite quase preta, texto frio, estados em verde/ambar/vermelho dessaturados."
+description: "Tema oficial: pílula grafite quase preta, texto frio e estados em verde, âmbar e vermelho dessaturados."
 colors:
   surface: "#141418"
   surface-border: "#2a2a30"
