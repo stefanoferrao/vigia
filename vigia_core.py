@@ -293,13 +293,41 @@ def log(message):
         pass
 
 
+def locale_code(value):
+    """"pt_BR.UTF-8" -> "pt"; a colon list ("pt_BR:pt:en") yields its first known language."""
+    for part in str(value or "").split(":"):
+        code = part.split("_", 1)[0].split(".", 1)[0].split("@", 1)[0].strip().lower()
+        if code in STRINGS:
+            return code
+    return None
+
+
+def locale_file_language():
+    """Session files that name the system language when the process env carries none."""
+    for path in (os.path.join(HOME, ".config", "locale.conf"), "/etc/locale.conf",
+                 "/etc/default/locale"):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                for line in handle:
+                    name, _, value = line.strip().partition("=")
+                    if name in ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"):
+                        code = locale_code(value.strip("\"'"))
+                        if code:
+                            return code
+        except OSError:
+            continue
+    return None
+
+
 def system_language():
     for name in ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"):
-        value = os.environ.get(name)
-        if value:
-            code = value.split("_", 1)[0].split(".", 1)[0].lower()
-            if code in STRINGS:
-                return code
+        code = locale_code(os.environ.get(name))
+        if code:
+            return code
+    if not IS_WINDOWS:
+        code = locale_file_language()
+        if code:
+            return code
     if IS_WINDOWS:
         try:
             import ctypes

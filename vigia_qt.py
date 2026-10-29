@@ -1233,8 +1233,9 @@ class VigIA(QObject):
             self.trigger_refresh()
 
     # -- menu ----------------------------------------------------------------
-    def popup_menu(self, anchor=None):
+    def popup_menu(self, anchor=None, pos=None, open_key=None):
         menu = StickyMenu(parent=anchor)
+        self.menu_anchor = anchor
         menu.setStyleSheet(menu_qss())
         self.menu = menu
 
@@ -1440,7 +1441,13 @@ class VigIA(QObject):
         quit_action = menu.addAction(self.config.t("quit"), self.quit)
         quit_action.setProperty("closes_menu", True)
 
-        menu.exec(QCursor.pos())
+        if open_key:  # re-opened after a language change: unfold the same submenu again
+            target = next((action for action in menu.actions()
+                           if action.menu() is not None
+                           and action.text() == self.config.t(open_key)), None)
+            if target is not None:
+                QTimer.singleShot(60, lambda: menu.setActiveAction(target))
+        menu.exec(pos or QCursor.pos())
 
     # -- settings ------------------------------------------------------------
     def set_opacity(self, value):
@@ -1514,6 +1521,16 @@ class VigIA(QObject):
         self.config.set("language", value)
         for window in self.windows:
             window.rebuild()
+        self.reopen_menu("menu_language")
+
+    def reopen_menu(self, open_key=None):
+        """The popup was built in the old language: rebuild it in place, same spot."""
+        menu = getattr(self, "menu", None)
+        if menu is None or not menu.isVisible():
+            return
+        pos, anchor = menu.pos(), getattr(self, "menu_anchor", None)
+        menu.close_chain()
+        QTimer.singleShot(0, lambda: self.popup_menu(anchor, pos, open_key))
 
     def set_island(self, enabled):
         """Dock the pills to the top edge (or release them back to the anchor)."""

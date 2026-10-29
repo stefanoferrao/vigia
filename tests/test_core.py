@@ -156,6 +156,29 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.get("language"), "auto")
 
 
+class LocaleDetectionTests(unittest.TestCase):
+    def test_locale_code(self):
+        self.assertEqual(core.locale_code("pt_BR.UTF-8"), "pt")
+        self.assertEqual(core.locale_code("pt_BR:pt:en"), "pt")
+        self.assertEqual(core.locale_code("xx_XX:de_DE"), "de")
+        self.assertEqual(core.locale_code("C.UTF-8"), None)
+        self.assertEqual(core.locale_code(""), None)
+
+    def test_system_language_reads_environment(self):
+        env = {"LC_ALL": "", "LC_MESSAGES": "", "LANG": "fr_FR.UTF-8", "LANGUAGE": ""}
+        with mock.patch.dict(os.environ, env):
+            self.assertEqual(core.system_language(), "fr")
+
+    def test_explicit_choice_beats_system(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = core.Config(os.path.join(directory, "vigia.toml"))
+            config.values["language"] = "de"
+            with mock.patch.dict(os.environ, {"LANG": "pt_BR.UTF-8"}):
+                self.assertEqual(config.language(), "de")
+                config.values["language"] = "auto"
+                self.assertEqual(config.language(), "pt")
+
+
 class AlertTests(unittest.TestCase):
     def test_thresholds(self):
         core.set_theme(core.THEME_DEFAULT)
