@@ -31,6 +31,10 @@ SIZES = {
     "large": {"font": 13, "icon": 15, "pad_v": 6, "pad_h": 12, "gap": 10},
 }
 SERVER_NAME = "vigia"
+ISLAND_WIDTH = 120     # collapsed bar: a Dynamic-Island style handle at the top edge
+ISLAND_HEIGHT = 8
+ISLAND_COLLAPSE_MS = 400
+MAX_WIDGET_SIZE = 16777215
 MENU_QSS = """
 QMenu {
     background-color: #24252b;
@@ -98,6 +102,23 @@ def gear_pixmap(size, dpr):
     if not renderer.isValid():
         return None
     return svg_pixmap(renderer, size, dpr)
+
+
+def pretty_accelerator(accelerator):
+    """Human form of an accelerator: '<Control><Alt>u' -> 'Ctrl+Alt+U'."""
+    names = {"control": "Ctrl", "ctrl": "Ctrl", "alt": "Alt", "mod1": "Alt",
+             "shift": "Shift", "super": "Super", "meta": "Super", "win": "Super"}
+    cleaned = str(accelerator or "").replace("<", "+").replace(">", "+")
+    parts = []
+    for part in cleaned.split("+"):
+        part = part.strip()
+        if not part:
+            continue
+        label = names.get(part.lower())
+        if label is None:
+            label = part.upper() if len(part) == 1 else part
+        parts.append(label)
+    return "+".join(parts) or "—"
 
 
 def parse_accelerator(accelerator):
@@ -306,6 +327,7 @@ class Pill(QWidget):
         self.value_labels = []
         self.system_labels = {}
         self.rows = []
+        self.island_open = False
 
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
@@ -323,6 +345,9 @@ class Pill(QWidget):
         self.hover_timer = QTimer(self)
         self.hover_timer.timeout.connect(self.poll_hover)
         self.hover_timer.start(120)
+        self.collapse_timer = QTimer(self)
+        self.collapse_timer.setSingleShot(True)
+        self.collapse_timer.timeout.connect(self.maybe_collapse)
         self.place()
 
     # -- build ---------------------------------------------------------------
@@ -423,6 +448,7 @@ class Pill(QWidget):
         self.gear_effect.setOpacity(1.0 if self.hovered else 0.0)
         self.gear.setGraphicsEffect(self.gear_effect)
         self.box.addWidget(self.gear)
+        self.apply_island_state()
 
     # -- paint ---------------------------------------------------------------
     def paintEvent(self, event):
@@ -438,6 +464,54 @@ class Pill(QWidget):
         painter.drawPath(path)
         painter.end()
 
+    # -- island --------------------------------------------------------------
+    def island_on(self):
+        return bool(self.app.config.get("island"))
+
+    def apply_island_state(self):
+        """Collapsed: a small bar with the content hidden. Open: the whole pill."""
+        opened = self.island_open or not self.island_on()
+        for index in range(self.box.count()):
+            widget = self.box.itemAt(index).widget()
+            if widget is not None:
+                widget.setVisible(opened)
+        if opened:
+            self.setMinimumSize(0, 0)
+            self.setMaximumSize(MAX_WIDGET_SIZE, MAX_WIDGET_SIZE)
+            self.adjustSize()
+        else:
+            self.setFixedSize(ISLAND_WIDTH, ISLAND_HEIGHT)
+
+    def set_island_open(self, opened):
+        if opened == self.island_open:
+            return
+        self.island_open = opened
+        self.apply_island_state()
+        self.place()
+
+    def sync_island(self):
+        """Keep open/closed state and the real window size in agreement."""
+        if not self.island_on():
+            return
+        wanted = self.hovered or self.app.island_pinned or self.app.menu_open()
+        if wanted:
+            self.collapse_timer.stop()
+            if not self.island_open:
+                self.island_open = True
+                self.apply_island_state()
+                self.place()
+        elif self.island_open and not self.collapse_timer.isActive():
+            self.collapse_timer.start(ISLAND_COLLAPSE_MS)
+        collapsed = (self.width(), self.height()) == (ISLAND_WIDTH, ISLAND_HEIGHT)
+        if collapsed == self.island_open:  # state drifted from the window size
+            self.apply_island_state()
+            self.place()
+
+    def maybe_collapse(self):
+        if self.hovered or self.app.island_pinned or self.app.menu_open():
+            return
+        self.set_island_open(False)
+
     # -- interaction ---------------------------------------------------------
     def poll_hover(self):
         if self.drag_offset is not None and QGuiApplication.mouseButtons() == Qt.NoButton:
@@ -448,6 +522,7 @@ class Pill(QWidget):
             self.hovered = inside
             self.gear_effect.setOpacity(1.0 if inside else 0.0)
             self.update()
+        self.sync_island()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -464,12 +539,16 @@ class Pill(QWidget):
 
     def mouseMoveEvent(self, event):
         if self.drag_offset is not None:
+            point = event.globalPosition().toPoint()
             if not self.drag_started:
-                delta = event.globalPosition().toPoint() - self.drag_origin
+                delta = point - self.drag_origin
                 if abs(delta.x()) < 3 and abs(delta.y()) < 3:
                     return
                 self.drag_started = True
-            self.move(event.globalPosition().toPoint() - self.drag_offset)
+            if self.island_on():
+                self.move(point.x() - self.drag_offset.x(), self.y())
+            else:
+                self.move(point - self.drag_offset)
             event.accept()
         else:
             super().mouseMoveEvent(event)
@@ -481,7 +560,12 @@ class Pill(QWidget):
             self.drag_started = False
             self.releaseMouse()
             if moved:
-                self.app.remember_position(self)
+                if self.island_on():
+                    self.app.remember_island(self)
+                else:
+                    self.app.remember_position(self)
+            elif self.island_on() and event.button() == Qt.LeftButton:
+                self.app.toggle_island_pinned()
             event.accept()
         else:
             super().mouseReleaseEvent(event)
@@ -492,13 +576,19 @@ class Pill(QWidget):
 
     def place(self, force=False):
         area = self.screen.availableGeometry()
+        box = (area.x(), area.y(), area.width(), area.height())
+        if self.island_on():
+            offset = 0 if force else self.app.island_offset(self)
+            x = core.island_x(box, self.width(), offset)
+            if self.pos() != QPoint(x, area.y()):
+                self.move(x, area.y())
+            return
         stored = None if force else self.app.config.positions.get(self.key())
         if stored:
             x, y = area.x() + stored[0], area.y() + stored[1]
         else:
             x, y = core.anchored_position(
-                (area.x(), area.y(), area.width(), area.height()),
-                self.width(), self.height(), self.app.config.get("anchor"))
+                box, self.width(), self.height(), self.app.config.get("anchor"))
         seams = core.seam_edges(self.screen_index, self.app.screen_geometries())
         x, y = core.clamp_to_area(x, y, self.width(), self.height(),
                                   (area.x(), area.y(), area.width(), area.height()),
@@ -555,6 +645,7 @@ class VigIA(QObject):
         self.report = {}
         self.hidden = False
         self.refreshing = False
+        self.island_pinned = False
         self.last_fetch = 0.0
         self.hotkey = None
         self.server = None
@@ -732,7 +823,8 @@ class VigIA(QObject):
         menu.setStyleSheet(MENU_QSS)
         self.menu = menu
 
-        header = menu.addAction(core.APP_NAME)
+        header = menu.addAction(
+            f"{core.APP_NAME}   ·   {self.config.t('hotkey_hint', accel=self.accelerator_label())}")
         header.setEnabled(False)
         menu.addSeparator()
 
@@ -871,6 +963,12 @@ class VigIA(QObject):
 
         menu.addSeparator()
 
+        island = QAction(self.config.t("menu_island"), menu)
+        island.setCheckable(True)
+        island.setChecked(self.config.get("island"))
+        island.toggled.connect(self.set_island)
+        menu.addAction(island)
+
         top = QAction(self.config.t("always_on_top"), menu)
         top.setCheckable(True)
         top.setChecked(self.config.get("always_on_top"))
@@ -888,9 +986,6 @@ class VigIA(QObject):
         autostart.setChecked(self.config.get("autostart"))
         autostart.toggled.connect(self.set_autostart)
         menu.addAction(autostart)
-
-        hint = menu.addAction(self.config.t("hotkey_hint", accel=self.hotkey.accelerator if self.hotkey else "—"))
-        hint.setEnabled(False)
 
         menu.addSeparator()
         menu.addAction(self.config.t("refresh_now"), self.trigger_refresh)
@@ -940,6 +1035,43 @@ class VigIA(QObject):
         for window in self.windows:
             window.rebuild()
 
+    def set_island(self, enabled):
+        """Dock the pills to the top edge (or release them back to the anchor)."""
+        self.config.set("island", enabled)
+        if not enabled:
+            self.island_pinned = False
+        for window in self.windows:
+            window.collapse_timer.stop()
+            window.island_open = bool(enabled)
+            window.apply_island_state()
+            window.place()
+
+    def island_offset(self, window):
+        return int(self.config.island_offsets.get(str(window.key()), 0))
+
+    def remember_island(self, window):
+        area = window.screen.availableGeometry()
+        center = window.x() + window.width() / 2
+        offset = int(round(center - (area.x() + area.width() / 2)))
+        limit = max(0, (area.width() - window.width()) // 2)
+        self.config.island_offsets[str(window.key())] = max(-limit, min(offset, limit))
+        self.config.save()
+        window.place()
+
+    def toggle_island_pinned(self):
+        """A click on the island pins it open; another click lets it collapse."""
+        self.island_pinned = not self.island_pinned
+        for window in self.windows:
+            window.sync_island()
+        core.log(f"island pinned: {self.island_pinned}")
+
+    def accelerator_label(self):
+        return pretty_accelerator(getattr(self.hotkey, "accelerator", ""))
+
+    def menu_open(self):
+        menu = getattr(self, "menu", None)
+        return menu is not None and menu.isVisible()
+
     def set_always_on_top(self, enabled):
         self.config.set("always_on_top", enabled)
         for window in self.windows:
@@ -974,6 +1106,7 @@ class VigIA(QObject):
 
     def reset_position(self):
         self.config.positions = {}
+        self.config.island_offsets = {}
         self.config.save()
         for window in self.windows:
             window.place(force=True)

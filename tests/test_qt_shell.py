@@ -19,6 +19,12 @@ except Exception as error:  # pragma: no cover - environment without PySide6
 
 @unittest.skipUnless(HAVE_QT, "PySide6 indisponível")
 class AcceleratorTests(unittest.TestCase):
+    def test_pretty_accelerator(self):
+        self.assertEqual(vigia_qt.pretty_accelerator("<Control><Alt>u"), "Ctrl+Alt+U")
+        self.assertEqual(vigia_qt.pretty_accelerator("Control+Alt+u"), "Ctrl+Alt+U")
+        self.assertEqual(vigia_qt.pretty_accelerator("<Super><Shift>a"), "Super+Shift+A")
+        self.assertEqual(vigia_qt.pretty_accelerator(""), "—")
+
     def test_angle_and_plus_syntax(self):
         self.assertEqual(vigia_qt.parse_accelerator("<Control><Alt>u"), ({"control", "alt"}, "u"))
         self.assertEqual(vigia_qt.parse_accelerator("Control+Alt+u"), ({"control", "alt"}, "u"))

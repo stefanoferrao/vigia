@@ -38,6 +38,13 @@ class AnchorTests(unittest.TestCase):
     AREA = (100, 50, 1000, 800)
     BOX = (200, 30)
 
+    def test_island_is_centred_and_clamped(self):
+        area = (100, 50, 1000, 800)
+        self.assertEqual(core.island_x(area, 120), 540)
+        self.assertEqual(core.island_x(area, 120, 100), 640)
+        self.assertEqual(core.island_x(area, 120, -9999), 100)
+        self.assertEqual(core.island_x(area, 120, 9999), 980)
+
     def position(self, anchor):
         return core.anchored_position(self.AREA, *self.BOX, anchor)
 
@@ -83,6 +90,19 @@ class SeamTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
+    def test_island_offsets_roundtrip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "vigia.toml")
+            with mock.patch.object(core, "LEGACY_CONFIG", os.path.join(directory, "missing.toml")):
+                config = core.Config(path)
+                self.assertFalse(config.get("island"))
+                self.assertEqual(config.island_offsets, {})
+                config.island_offsets["HDMI-A-0"] = -40
+                config.save()
+                again = core.Config(path)
+                self.assertEqual(again.island_offsets["HDMI-A-0"], -40)
+                self.assertFalse(again.get("island"))
+
     def test_roundtrip_and_sanitising(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "vigia.toml")

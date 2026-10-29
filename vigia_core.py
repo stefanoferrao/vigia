@@ -14,7 +14,7 @@ import tomllib
 from datetime import datetime
 
 APP_NAME = "VigIA"
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 IS_WINDOWS = platform.system() == "Windows"
 HOME = os.path.expanduser("~")
 MARGIN = 18
@@ -58,6 +58,7 @@ STRINGS = {
         "menu_metric": "O que vigiar",
         "metric_auto": "Maior uso (automático)",
         "metric_waiting": "Aguardando dados…",
+        "menu_island": "Encaixar no topo (ilha)",
         "size_small": "Pequeno", "size_medium": "Médio", "size_large": "Grande",
         "icons_brand": "Cor da marca", "icons_mono": "Monocromático",
         "icons_alert": "Alerta por uso",
@@ -91,6 +92,7 @@ STRINGS = {
         "menu_metric": "What to watch",
         "metric_auto": "Most used (auto)",
         "metric_waiting": "Waiting for data…",
+        "menu_island": "Dock to top edge (island)",
         "size_small": "Small", "size_medium": "Medium", "size_large": "Large",
         "icons_brand": "Brand colour", "icons_mono": "Monochrome",
         "icons_alert": "Usage alert",
@@ -124,6 +126,7 @@ STRINGS = {
         "menu_metric": "Qué vigilar",
         "metric_auto": "Mayor uso (automático)",
         "metric_waiting": "Esperando datos…",
+        "menu_island": "Anclar arriba (isla)",
         "size_small": "Pequeño", "size_medium": "Mediano", "size_large": "Grande",
         "icons_brand": "Color de marca", "icons_mono": "Monocromático",
         "icons_alert": "Alerta por uso",
@@ -157,6 +160,7 @@ STRINGS = {
         "menu_metric": "Quoi surveiller",
         "metric_auto": "Le plus utilisé (auto)",
         "metric_waiting": "En attente des données…",
+        "menu_island": "Ancrer en haut (île)",
         "size_small": "Petit", "size_medium": "Moyen", "size_large": "Grand",
         "icons_brand": "Couleur de marque", "icons_mono": "Monochrome",
         "icons_alert": "Alerte d'usage",
@@ -190,6 +194,7 @@ STRINGS = {
         "menu_metric": "Was überwachen",
         "metric_auto": "Höchste Nutzung (automatisch)",
         "metric_waiting": "Warte auf Daten…",
+        "menu_island": "Oben andocken (Insel)",
         "size_small": "Klein", "size_medium": "Mittel", "size_large": "Groß",
         "icons_brand": "Markenfarbe", "icons_mono": "Einfarbig",
         "icons_alert": "Nutzungswarnung",
@@ -228,12 +233,13 @@ DEFAULTS = {
     "icon_style": "brand",       # brand | mono | alert
     "monitor": "primary",        # primary | secondary | all | <index> | <screen name>
     "anchor": "top-right",
+    "island": False,         # dock the pills to the top edge, Dynamic Island style
     "always_on_top": True,
     "show_system": False,
     "autostart": True,
     "refresh_minutes": 5,
     "max_providers": 4,
-    "hotkey": "<Control><Alt>u",
+    "hotkey": "<Control><Alt>v",
     "language": "auto",
     "alert_warn": 60,        # icon_style = "alert": amber from this percentage
     "alert_critical": 80,    # ... and red from this one
@@ -294,11 +300,13 @@ class Config:
         self.values = dict(DEFAULTS)
         self.positions = {}
         self.metrics = {}
+        self.island_offsets = {}
         self.load()
 
     def load(self):
         self.positions = {}
         self.metrics = {}
+        self.island_offsets = {}
         if not os.path.isfile(self.path) and os.path.isfile(LEGACY_CONFIG):
             try:
                 os.makedirs(os.path.dirname(self.path), exist_ok=True)
@@ -338,6 +346,13 @@ class Config:
                 choice = str(value or "").strip()
                 if key and choice:
                     self.metrics[str(key).lower()] = choice
+        offsets = raw.get("island_offsets") or {}
+        if isinstance(offsets, dict):
+            for key, value in offsets.items():
+                try:
+                    self.island_offsets[str(key)] = int(value)
+                except (TypeError, ValueError):
+                    continue
         self.sanitize()
         if not os.path.isfile(self.path):
             self.save()
@@ -383,6 +398,11 @@ class Config:
             lines.append("[overlay.metrics]")
             for key in sorted(self.metrics):
                 lines.append(f'"{key}" = {_toml_value(self.metrics[key])}')
+        if self.island_offsets:
+            lines.append("")
+            lines.append("[overlay.island_offsets]")
+            for key in sorted(self.island_offsets):
+                lines.append(f'"{key}" = {int(self.island_offsets[key])}')
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             with open(self.path, "w", encoding="utf-8") as handle:
@@ -706,6 +726,14 @@ def anchored_position(area, width, height, anchor, margin=MARGIN):
         "bottom": y0 + area_h - height - margin,
     }[vertical]
     return x, y
+
+
+def island_x(area, width, offset=0):
+    """Left edge of a top-centred island, nudged by the saved horizontal offset."""
+    x0, _y0, area_w, _area_h = area
+    x = x0 + (area_w - width) / 2 + offset
+    x = max(x0, min(x, x0 + area_w - width))
+    return int(round(x))
 
 
 def clamp_to_area(x, y, width, height, area, margin=MARGIN, seams=(False, False, False, False)):

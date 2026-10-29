@@ -25,6 +25,8 @@ CPU, RAM e GPU na mesma linha.
 - **Qual limite mostrar**: em *O que vigiar*, escolha por provedor a janela que
   importa — sessão de 5h, semanal, mensal — ou um limite do próprio plano, como o
   `Fable (7d)` do Claude. O padrão é o mais consumido.
+- **Modo ilha**: encaixe a pílula na borda de cima como uma *Dynamic Island* — só uma
+  faixa fina aparece; ela abre ao passar o mouse (ou com um clique, que a fixa aberta).
 - **Cinco idiomas**: português, inglês, espanhol, francês e alemão (ou automático pelo sistema).
 - **Atalho global** e autostart opcional.
 
@@ -70,11 +72,16 @@ Ao abrir, a pílula aparece no canto superior direito do monitor principal.
 - **Arrastar** move a pílula; a posição fica salva por monitor.
 - **Engrenagem** (ou botão direito) abre o menu com todos os ajustes. O menu e os
   submenus **ficam abertos** enquanto você muda as opções — só *Esconder* e *Sair* fecham.
-- **Atalho padrão `Ctrl+Alt+U`** mostra/esconde (e inicia, se não estiver rodando).
+  No topo do menu ficam o nome e o atalho em uso (`VigIA · Atalho: Ctrl+Alt+V`).
+- **Modo ilha** (menu → *Encaixar no topo (ilha)*) deixa só uma faixa de 120×8 px no
+  alto, centralizada; passar o mouse abre a pílula inteira, sair do mouse recolhe em
+  0,4 s, e um **clique fixa aberta** (outro clique libera). Arrastar na horizontal
+  move a faixa e a posição fica salva por monitor.
+- **Atalho padrão `Ctrl+Alt+V`** mostra/esconde (e inicia, se não estiver rodando).
 - **Sair de verdade** é pelo menu → *Sair*.
 
 > Atalhos começando com `Super` costumam ser capturados pelo sistema antes de
-> chegar ao app. Por isso o padrão é `Ctrl+Alt+U`; trocar é uma linha no config.
+> chegar ao app. Por isso o padrão é `Ctrl+Alt+V`; trocar é uma linha no config.
 
 ## Configuração
 
@@ -90,12 +97,13 @@ monitor = "primary"     # primary | secondary | all | "0", "1", ...
 anchor = "top-right"    # top-left | top-center | top-right
                         # middle-left | middle-center | middle-right
                         # bottom-left | bottom-center | bottom-right
+island = false          # true: encaixa no topo como uma faixa fina (modo ilha)
 always_on_top = true
 show_system = false     # CPU / RAM / GPU
 autostart = true
 refresh_minutes = 5     # 1 a 60
 max_providers = 4       # 1 a 8
-hotkey = "<Control><Alt>u"
+hotkey = "<Control><Alt>v"
 language = "auto"       # auto | pt | en | es | fr | de
 alert_warn = 60         # icon_style = "alert": âmbar a partir daqui
 alert_critical = 80     # ... e vermelho a partir daqui
@@ -105,6 +113,9 @@ hide_system = ""        # "cpu,ram,gpu" para esconder itens do sistema
 [overlay.metrics]       # qual limite cada provedor mostra (padrão: o maior uso)
 anthropic = "Weekly (7d)"
 "opencode-go" = "Rolling (5h)"
+
+[overlay.island_offsets] # deslocamento horizontal da ilha em cada monitor
+"HDMI-A-0" = -40
 ```
 
 Para escolher o que aparece, use o menu **Itens** (checkbox por provedor e por
@@ -114,7 +125,8 @@ continuam listados no menu, então dá para trazê-los de volta. Com `icon_style
 
 A tabela `[overlay.positions]` guarda o deslocamento de cada monitor (chave = nome
 da tela) depois de um arrasto — não precisa mexer nela. *Restaurar posição* no
-menu limpa esses valores e volta ao encaixe escolhido.
+menu limpa esses valores e volta ao encaixe escolhido. No modo ilha vale o mesmo
+para `[overlay.island_offsets]`, que guarda só o deslocamento horizontal.
 
 ## Idiomas
 
