@@ -600,10 +600,9 @@ class Pill(QWidget):
         if start == end:
             self.finish_island_anim()
             return
-        # Resuming mid-way: content opacity starts where it currently is.
-        base = self.content_effect.opacity() if self.content_effect.isEnabled() else 1.0
-        if not opened and base >= 1.0:
-            base = 1.0
+        # Interrupting a running fold/unfold: continue from the current opacity.
+        base = (self.content_effect.opacity() if self.content_effect.isEnabled()
+                else (0.0 if opened and start.height() <= ISLAND_HEIGHT else 1.0))
 
         def lerp(a, b, t):
             return round(a + (b - a) * t)
@@ -617,8 +616,8 @@ class Pill(QWidget):
             self.center_content()
             if opened:
                 fade = (raw - 0.30) / 0.70
-                self.set_content_opacity(max(base, fade * fade * (3 - 2 * fade))
-                                         if fade > 0 else base)
+                fade = max(0.0, min(1.0, fade))
+                self.set_content_opacity(max(base, fade * fade * (3 - 2 * fade)))
             else:
                 fade = 1.0 - min(1.0, raw / 0.55)
                 self.set_content_opacity(min(base, fade * fade * (3 - 2 * fade)))
@@ -630,8 +629,7 @@ class Pill(QWidget):
         anim.valueChanged.connect(step)
         anim.finished.connect(self.finish_island_anim)
         self.island_anim = anim
-        if opened:
-            self.set_content_opacity(base if base < 1.0 else 0.0)
+        self.set_content_opacity(base)
         anim.start()
 
     def finish_island_anim(self):
