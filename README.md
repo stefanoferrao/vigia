@@ -6,6 +6,8 @@
 
 ![Prévia do VigIA](docs/preview.png)
 
+**Site:** [stefanoferrao.github.io/vigia](https://stefanoferrao.github.io/vigia/) — passo a passo de instalação, demonstrações e o config completo.
+
 VigIA fica sobre a tela, sem moldura e sem ícone no painel, mostrando quanto do
 seu limite cada agente de IA já consumiu. Os números aparecem ao lado do ícone
 real de cada provedor (Claude, Codex, OpenCode, Gemini, Grok…) e, se você quiser,
