@@ -22,6 +22,7 @@ if (-not $python) {
 New-Item -ItemType Directory -Force -Path $Root | Out-Null
 Copy-Item -Force "$Src\vigia", "$Src\vigia_qt.py", "$Src\vigia_core.py" $Root
 Copy-Item -Recurse -Force "$Src\icons" (Join-Path $Root "icons")
+Copy-Item -Recurse -Force "$Src\themes" (Join-Path $Root "themes")
 Copy-Item -Recurse -Force "$Src\assets" (Join-Path $Root "assets")
 
 $venv = Join-Path $Root "venv"

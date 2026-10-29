@@ -132,6 +132,12 @@ da tela) depois de um arrasto — não precisa mexer nela. *Restaurar posição*
 menu limpa esses valores e volta ao encaixe escolhido. No modo ilha vale o mesmo
 para `[overlay.island_offsets]`, que guarda só o deslocamento horizontal.
 
+## Temas
+
+O visual segue o formato [DESIGN.md](https://github.com/google-labs-code/design.md): cada tema é um arquivo `.md` cujo front matter define as cores (`surface`, `text-primary`, `state-ok`, `state-warning`, `state-critical`, `primary`, ...). O tema padrão é o [`DESIGN.md`](DESIGN.md) da raiz.
+
+Temas incluídos em [`themes/`](themes/): Midnight, Graphite, Light, Aurora, Sunset e Mono High Contrast (AAA). Escolha em engrenagem → **Tema**, ou use **Automático (sistema)** para alternar entre escuro e claro conforme o sistema. Para criar o seu, copie um arquivo de `themes/` para `~/.config/vigia/themes/`, edite as cores e valide com `npx @google/design.md lint <arquivo>`; ele aparece no menu.
+
 ## Idiomas
 
 O padrão é **Automático** (segue o locale do sistema; no Windows, o idioma da

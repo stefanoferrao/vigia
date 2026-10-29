@@ -8,6 +8,7 @@ import glob
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tomllib
@@ -51,6 +52,8 @@ STRINGS = {
         "menu_opacity": "Transparência",
         "menu_size": "Tamanho",
         "menu_icons": "Ícones",
+        "menu_theme": "Tema",
+        "theme_auto": "Automático (sistema)",
         "menu_monitor": "Monitor",
         "menu_anchor": "Posição",
         "menu_language": "Idioma",
@@ -85,6 +88,8 @@ STRINGS = {
         "menu_opacity": "Opacity",
         "menu_size": "Size",
         "menu_icons": "Icons",
+        "menu_theme": "Theme",
+        "theme_auto": "Automatic (system)",
         "menu_monitor": "Monitor",
         "menu_anchor": "Position",
         "menu_language": "Language",
@@ -119,6 +124,8 @@ STRINGS = {
         "menu_opacity": "Opacidad",
         "menu_size": "Tamaño",
         "menu_icons": "Iconos",
+        "menu_theme": "Tema",
+        "theme_auto": "Automático (sistema)",
         "menu_monitor": "Monitor",
         "menu_anchor": "Posición",
         "menu_language": "Idioma",
@@ -153,6 +160,8 @@ STRINGS = {
         "menu_opacity": "Opacité",
         "menu_size": "Taille",
         "menu_icons": "Icônes",
+        "menu_theme": "Thème",
+        "theme_auto": "Automatique (système)",
         "menu_monitor": "Écran",
         "menu_anchor": "Position",
         "menu_language": "Langue",
@@ -187,6 +196,8 @@ STRINGS = {
         "menu_opacity": "Deckkraft",
         "menu_size": "Größe",
         "menu_icons": "Symbole",
+        "menu_theme": "Design",
+        "theme_auto": "Automatisch (System)",
         "menu_monitor": "Monitor",
         "menu_anchor": "Position",
         "menu_language": "Sprache",
@@ -241,6 +252,7 @@ DEFAULTS = {
     "max_providers": 4,
     "hotkey": "<Control><Alt>v",
     "language": "auto",
+    "theme": "vigia",            # vigia | auto | any file stem in themes/ (DESIGN.md tokens)
     "alert_warn": 60,        # icon_style = "alert": amber from this percentage
     "alert_critical": 80,    # ... and red from this one
     "hide_providers": "",    # comma-separated provider ids to keep out of the pill
@@ -368,6 +380,8 @@ class Config:
             self.values["monitor"] = DEFAULTS["monitor"]
         if self.values["anchor"] not in ANCHORS:
             self.values["anchor"] = DEFAULTS["anchor"]
+        if not str(self.values["theme"]).strip():
+            self.values["theme"] = DEFAULTS["theme"]
         if self.values["language"] not in STRINGS and self.values["language"] != "auto":
             self.values["language"] = DEFAULTS["language"]
         self.values["refresh_minutes"] = max(1, min(60, self.values["refresh_minutes"]))
@@ -798,10 +812,90 @@ BRAND_COLORS = {
     "deepseek": "#4d6bfe", "zhipu": "#3d7eff", "zai": "#3d7eff",
     "minimax": "#e5484d", "moonshot": "#7c6cf5", "kimi": "#7c6cf5",
 }
-DEFAULT_ICON_TINT = "#e6e6ec"
-MONO_ICON_TINT = "#c3c8d2"
-TEXT_PRIMARY = "#e6e6ec"
-TEXT_MUTED = "rgba(230,230,236,0.66)"
+THEME_DEFAULT = "vigia"
+THEME_FALLBACK = {   # "VigIA Dark", mirrors DESIGN.md
+    "surface": "#141418", "surface-border": "#2a2a30",
+    "text-primary": "#e6e6ec", "text-secondary": "#9f9fa4", "text-disabled": "#898d98",
+    "divider": "#33343a",
+    "state-ok": "#4cc38a", "state-warning": "#f2bd34", "state-critical": "#ff6b68",
+    "primary": "#8b93ff",
+    "menu-surface": "#24252b", "menu-border": "#3a3b42", "menu-hover": "#3a3b42",
+}
+THEME = dict(THEME_FALLBACK)   # the active theme; mutated in place by set_theme()
+THEME_LIGHT = "light"          # what "auto" picks when the system is in light mode
+COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+
+
+def theme_directories():
+    """Where DESIGN.md themes may live: env override, next to the code, user copies."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    directories = []
+    override = os.environ.get("VIGIA_THEME_DIR")
+    if override:
+        directories.append(override)
+    directories += [
+        os.path.join(here, "themes"),
+        os.path.join(HOME, ".local", "share", "vigia", "themes"),
+        os.path.join(HOME, ".config", "vigia", "themes"),
+    ]
+    return [os.path.abspath(directory) for directory in directories]
+
+
+def parse_theme(path):
+    """Read name + colors from a DESIGN.md front matter. Returns None if unusable."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return None
+    if not lines or lines[0].strip() != "---":
+        return None
+    name, colors, in_colors = None, {}, False
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        if line and not line[0].isspace():
+            in_colors = line.strip() == "colors:"
+            if line.startswith("name:"):
+                name = line.split(":", 1)[1].strip().strip("\"'")
+        elif in_colors and ":" in line:
+            key, value = line.split(":", 1)
+            value = value.strip().strip("\"'")
+            if COLOR_RE.match(value):
+                colors[key.strip()] = value
+    if not colors:
+        return None
+    return {"name": name or os.path.splitext(os.path.basename(path))[0], "colors": colors}
+
+
+def list_themes():
+    """[(id, display name)]: the built-in theme first, then every valid theme file."""
+    found = {THEME_DEFAULT: "VigIA Dark"}
+    for directory in theme_directories():
+        for path in sorted(glob.glob(os.path.join(directory, "*.md"))):
+            parsed = parse_theme(path)
+            if parsed:
+                found[os.path.splitext(os.path.basename(path))[0].lower()] = parsed["name"]
+    return list(found.items())
+
+
+def set_theme(name, dark=True):
+    """Activate a theme by id ("auto" follows `dark`); unknown ids fall back to VigIA Dark."""
+    name = str(name).strip().lower()
+    if name == "auto":
+        name = THEME_DEFAULT if dark else THEME_LIGHT
+    colors = dict(THEME_FALLBACK)
+    if name != THEME_DEFAULT:
+        for directory in theme_directories():
+            parsed = parse_theme(os.path.join(directory, name + ".md"))
+            if parsed:
+                colors.update({k: v for k, v in parsed["colors"].items() if k in colors})
+    THEME.clear()
+    THEME.update(colors)
+
+
+def theme_color(key):
+    return THEME[key]
 
 
 def icon_directories():
@@ -833,16 +927,16 @@ def icon_path(brand):
 
 def icon_tint(brand, style):
     if style in ("mono", "alert"):
-        return MONO_ICON_TINT
-    return BRAND_COLORS.get(brand, DEFAULT_ICON_TINT)
+        return THEME["text-secondary"]
+    return BRAND_COLORS.get(brand, THEME["text-primary"])
 
 
 def value_tint(style, percent, warn=60, critical=80):
-    """Neutral text, or amber/red once the usage reaches the alert bands."""
+    """Calm green text, or amber/red once the usage reaches the alert bands."""
     if style != "alert" or not isinstance(percent, (int, float)):
-        return TEXT_PRIMARY
+        return THEME["text-primary"]
     if percent >= critical:
-        return "#ed4b48"
+        return THEME["state-critical"]
     if percent >= warn:
-        return "#f2bd34"
-    return TEXT_PRIMARY
+        return THEME["state-warning"]
+    return THEME["state-ok"]

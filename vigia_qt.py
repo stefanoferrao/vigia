@@ -41,18 +41,21 @@ ISLAND_COLLAPSE_MS = 400
 ISLAND_EXPAND_MS = 340  # unfold: fast start, long soft landing
 ISLAND_HIDE_MS = 240    # fold back: content leaves first, then the pill closes
 MAX_WIDGET_SIZE = 16777215
-MENU_QSS = """
-QMenu {
-    background-color: #24252b;
-    color: #e6e6ec;
-    border: 1px solid #3a3b42;
+def menu_qss():
+    """Menu stylesheet built from the active theme."""
+    t = core.THEME
+    return f"""
+QMenu {{
+    background-color: {t['menu-surface']};
+    color: {t['text-primary']};
+    border: 1px solid {t['menu-border']};
     padding: 4px;
-}
-QMenu::item { padding: 5px 22px 5px 22px; border-radius: 4px; }
-QMenu::item:selected { background-color: #3a3b42; }
-QMenu::item:disabled { color: #7c818c; }
-QMenu::separator { height: 1px; background: #3a3b42; margin: 4px 6px; }
-QMenu::indicator { width: 12px; height: 12px; }
+}}
+QMenu::item {{ padding: 5px 22px 5px 22px; border-radius: 4px; }}
+QMenu::item:selected {{ background-color: {t['menu-hover']}; }}
+QMenu::item:disabled {{ color: {t['text-disabled']}; }}
+QMenu::separator {{ height: 1px; background: {t['menu-border']}; margin: 4px 6px; }}
+QMenu::indicator {{ width: 12px; height: 12px; }}
 """
 
 
@@ -369,6 +372,7 @@ class Pill(QWidget):
             item = self.box.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.hide()  # gone this frame, not at the next event-loop turn
                 widget.deleteLater()
         self.value_labels = []
         self.system_labels = {}
@@ -378,6 +382,8 @@ class Pill(QWidget):
         font = QFont(label.font())
         font.setPixelSize(self.css["font"])
         font.setBold(True)
+        if hasattr(font, "setFeature"):
+            font.setFeature(QFont.Tag("tnum"), 1)  # steady digit width: numbers don't jitter
         label.setFont(font)
         # Left-aligned inside a fixed "100%" slot: the icon -> number gap stays
         # constant whatever the number is, and the block gap stays visibly bigger.
@@ -394,14 +400,14 @@ class Pill(QWidget):
         font = QFont(label.font())
         font.setPixelSize(self.css["font"])
         label.setFont(font)
-        label.setStyleSheet("color: rgba(230,230,236,168);")
+        label.setStyleSheet(f"color: {core.THEME['text-secondary']};")
         label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         return label
 
     def divider(self):
         line = QWidget()
         line.setFixedSize(1, max(6, self.css["icon"] - 2))
-        line.setStyleSheet("background: rgba(255,255,255,41);")
+        line.setStyleSheet(f"background: {core.THEME['divider']};")
         line.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         return line
 
@@ -439,7 +445,7 @@ class Pill(QWidget):
                 font.setPixelSize(self.css["font"])
                 font.setBold(True)
                 initials.setFont(font)
-                initials.setStyleSheet("color: rgba(230,230,236,168);")
+                initials.setStyleSheet(f"color: {core.THEME['text-secondary']};")
                 initials.setFixedWidth(self.css["icon"] + 2)
                 initials.setAlignment(Qt.AlignCenter)
                 initials.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -497,8 +503,16 @@ class Pill(QWidget):
         path = QPainterPath()
         path.addRoundedRect(rect, radius, radius)
         alpha = self.app.effective_alpha(self.hovered)
-        painter.fillPath(path, QColor(20, 20, 24, int(alpha * 255)))
-        painter.setPen(QPen(QColor(255, 255, 255, 23), 1))
+        fill = QColor(core.THEME["surface"])
+        fill.setAlpha(int(alpha * 255))
+        painter.fillPath(path, fill)
+        if fill.lightness() < 128 and rect.height() > ISLAND_HEIGHT + 2:
+            # 1 px inner highlight along the top: a hint of depth on dark surfaces
+            painter.setClipPath(path)
+            painter.setPen(QPen(QColor(255, 255, 255, 18), 1))
+            painter.drawLine(int(radius), 1, int(rect.width() - radius), 1)
+            painter.setClipping(False)
+        painter.setPen(QPen(QColor(core.THEME["surface-border"]), 1))
         painter.drawPath(path)
         painter.end()
 
@@ -817,6 +831,11 @@ class VigIA(QObject):
         self.server = None
         self.data_ready.connect(self.apply_report)
 
+        core.set_theme(self.config.get("theme"), self.system_is_dark())
+        hints = QGuiApplication.styleHints()
+        if hasattr(hints, "colorSchemeChanged"):
+            hints.colorSchemeChanged.connect(
+                lambda *_: self.config.get("theme") == "auto" and self.apply_theme())
         self.start_hotkey()
         self.rebuild_windows()
         self.start_server()
@@ -986,7 +1005,7 @@ class VigIA(QObject):
     # -- menu ----------------------------------------------------------------
     def popup_menu(self, anchor=None):
         menu = StickyMenu(parent=anchor)
-        menu.setStyleSheet(MENU_QSS)
+        menu.setStyleSheet(menu_qss())
         self.menu = menu
 
         header = menu.addAction(
@@ -1017,6 +1036,16 @@ class VigIA(QObject):
             action.triggered.connect(lambda _=False, value=key: self.set_size(value))
             group.addAction(action)
             size_menu.addAction(action)
+
+        theme_menu = self.submenu(menu, self.config.t("menu_theme"))
+        group = QActionGroup(theme_menu)
+        for key, label in ([("auto", self.config.t("theme_auto"))] + core.list_themes()):
+            action = QAction(label, theme_menu)
+            action.setCheckable(True)
+            action.setChecked(key == self.config.get("theme"))
+            action.triggered.connect(lambda _=False, value=key: self.set_theme(value))
+            group.addAction(action)
+            theme_menu.addAction(action)
 
         icons_menu = self.submenu(menu, self.config.t("menu_icons"))
         group = QActionGroup(icons_menu)
@@ -1175,6 +1204,21 @@ class VigIA(QObject):
         for window in self.windows:
             window.rebuild()
 
+    def system_is_dark(self):
+        hints = QGuiApplication.styleHints()
+        scheme = getattr(hints, "colorScheme", None)
+        return scheme is None or scheme() != Qt.ColorScheme.Light
+
+    def apply_theme(self):
+        core.set_theme(self.config.get("theme"), self.system_is_dark())
+        for window in self.windows:
+            window.rebuild()
+            window.update()
+
+    def set_theme(self, value):
+        self.config.set("theme", value)
+        self.apply_theme()
+
     def set_icon_style(self, value):
         self.config.set("icon_style", value)
         for window in self.windows:
@@ -1260,7 +1304,7 @@ class VigIA(QObject):
     def submenu(self, parent, title):
         sub = StickyMenu(parent=parent)
         sub.setTitle(title)
-        sub.setStyleSheet(MENU_QSS)
+        sub.setStyleSheet(menu_qss())
         parent.addMenu(sub)
         return sub
 

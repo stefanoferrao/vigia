@@ -158,11 +158,24 @@ class ConfigTests(unittest.TestCase):
 
 class AlertTests(unittest.TestCase):
     def test_thresholds(self):
-        self.assertEqual(core.value_tint("alert", 59), core.TEXT_PRIMARY)
-        self.assertEqual(core.value_tint("alert", 60), "#f2bd34")
-        self.assertEqual(core.value_tint("alert", 80), "#ed4b48")
-        self.assertEqual(core.value_tint("brand", 99), core.TEXT_PRIMARY)
-        self.assertEqual(core.value_tint("alert", 30, warn=20, critical=25), "#ed4b48")
+        core.set_theme(core.THEME_DEFAULT)
+        ok, warning, critical = (core.THEME[k] for k in ("state-ok", "state-warning", "state-critical"))
+        self.assertEqual(core.value_tint("alert", 59), ok)
+        self.assertEqual(core.value_tint("alert", 60), warning)
+        self.assertEqual(core.value_tint("alert", 80), critical)
+        self.assertEqual(core.value_tint("brand", 99), core.THEME["text-primary"])
+        self.assertEqual(core.value_tint("alert", 30, warn=20, critical=25), critical)
+
+    def test_themes_load_and_fall_back(self):
+        names = dict(core.list_themes())
+        self.assertIn(core.THEME_DEFAULT, names)
+        self.assertIn("light", names)
+        core.set_theme("light")
+        self.assertEqual(core.THEME["surface"], "#fafafa")
+        core.set_theme("auto", dark=False)
+        self.assertEqual(core.THEME["surface"], "#fafafa")
+        core.set_theme("does-not-exist")
+        self.assertEqual(core.THEME, core.THEME_FALLBACK)
 
     def test_hidden_lists_are_normalised(self):
         with tempfile.TemporaryDirectory() as directory:

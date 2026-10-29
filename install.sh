@@ -56,7 +56,8 @@ install_xcb_cursor
 install -d "$DATA" "$BIN" "$APPS" "$THEME/scalable/apps" "$DATA/icons"
 install -m644 "$SRC/vigia_qt.py" "$SRC/vigia_core.py" "$SRC/vigia" "$DATA/"
 cp "$SRC"/icons/*.svg "$DATA/icons/"
-install -d "$DATA/assets"
+install -d "$DATA/assets" "$DATA/themes"
+cp "$SRC"/themes/*.md "$DATA/themes/"
 cp "$SRC"/assets/*.svg "$DATA/assets/"
 install -m644 "$SRC/assets/vigia.svg" "$THEME/scalable/apps/vigia.svg"
 
