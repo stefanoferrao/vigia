@@ -230,23 +230,26 @@ class Hotkey(QObject):
 # ----------------------------------------------------------------------------- pill
 
 class StickyMenu(QMenu):
-    """Keeps the root menu open after a setting changes.
+    """Keeps the popup open after a setting changes.
 
-    Submenus close themselves (keep_open=False) so the parent stays visible;
-    actions flagged with the "closes_menu" property close the whole popup.
+    The root menu and its submenus all stay open, so several settings can be
+    changed in a row; only actions flagged with "closes_menu" close the popup.
     """
-
-    def __init__(self, keep_open=True, parent=None):
-        super().__init__(parent)
-        self.keep_open = keep_open
 
     def _activate(self, action):
         if action is None or not action.isEnabled() or action.menu() is not None:
             return False
         action.trigger()
-        if action.property("closes_menu") or not self.keep_open:
-            self.hide()
+        if action.property("closes_menu"):
+            self.close_chain()
         return True
+
+    def close_chain(self):
+        """Hide this menu and every menu it hangs from (submenu -> root)."""
+        menu = self
+        while isinstance(menu, QMenu):
+            menu.hide()
+            menu = menu.parentWidget()
 
     def mouseReleaseEvent(self, event):
         if self._activate(self.actionAt(event.position().toPoint())):
@@ -436,10 +439,6 @@ class Pill(QWidget):
         painter.end()
 
     # -- interaction ---------------------------------------------------------
-    def show_menu(self):
-        # Defer: opening a popup inside the release event makes it close itself.
-        QTimer.singleShot(0, lambda: self.app.popup_menu(self.gear))
-
     def poll_hover(self):
         if self.drag_offset is not None and QGuiApplication.mouseButtons() == Qt.NoButton:
             self.drag_offset = None
@@ -541,7 +540,6 @@ class Pill(QWidget):
         self.app.popup_menu(self)
 
 
-
 # ------------------------------------------------------------------------------ app
 
 class VigIA(QObject):
@@ -554,6 +552,7 @@ class VigIA(QObject):
         self.metrics = core.SystemMetrics()
         self.windows = []
         self.rows = []
+        self.report = {}
         self.hidden = False
         self.refreshing = False
         self.last_fetch = 0.0
@@ -707,11 +706,15 @@ class VigIA(QObject):
             self.refreshing = False
 
     def apply_report(self, report):
-        self.rows = core.provider_rows(report, self.config.get("max_providers"))
+        self.report = report or {}
         self.last_fetch = time.monotonic()
         self.refreshing = False
-        for window in self.windows:
-            window.set_rows(self.rows)
+        self.refresh_rows()
+
+    def refresh_rows(self):
+        self.rows = core.provider_rows(
+            self.report, self.config.get("max_providers"), self.config.metrics)
+        self.apply_rows()
 
     def system_tick(self):
         if not self.config.get("show_system"):
@@ -725,7 +728,7 @@ class VigIA(QObject):
 
     # -- menu ----------------------------------------------------------------
     def popup_menu(self, anchor=None):
-        menu = StickyMenu(keep_open=True, parent=anchor)
+        menu = StickyMenu(parent=anchor)
         menu.setStyleSheet(MENU_QSS)
         self.menu = menu
 
@@ -795,6 +798,39 @@ class VigIA(QObject):
             action.toggled.connect(
                 lambda checked, key=name: self.toggle_system(key, checked))
             items_menu.addAction(action)
+
+        watch_menu = self.submenu(menu, self.config.t("menu_metric"))
+        for entry in core.dashboard_entries(self.report):
+            provider_id = str(entry.get("id") or entry.get("brand") or "")
+            metrics = core.quota_metrics(entry)
+            if not metrics:
+                continue
+            provider_menu = self.submenu(
+                watch_menu, str(entry.get("display_name") or entry.get("name") or provider_id))
+            group = QActionGroup(provider_menu)
+            choice = self.config.metric_choice(provider_id)
+            chosen = None if choice == "auto" else core.matching_metric(entry, choice)
+            auto = QAction(self.config.t("metric_auto"), provider_menu)
+            auto.setCheckable(True)
+            auto.setChecked(chosen is None)
+            auto.triggered.connect(
+                lambda _=False, pid=provider_id: self.set_metric(pid, "auto"))
+            group.addAction(auto)
+            provider_menu.addAction(auto)
+            provider_menu.addSeparator()
+            for metric in metrics:
+                label = metric.get("label") or "—"
+                action = QAction(f"{label} — {core.metric_display(metric)}", provider_menu)
+                action.setCheckable(True)
+                action.setChecked(chosen is metric)
+                action.triggered.connect(
+                    lambda _=False, pid=provider_id, value=label: self.set_metric(pid, value))
+                group.addAction(action)
+                provider_menu.addAction(action)
+
+        if watch_menu.isEmpty():
+            waiting = watch_menu.addAction(self.config.t("metric_waiting"))
+            waiting.setEnabled(False)
 
         monitor_menu = self.submenu(menu, self.config.t("menu_monitor"))
         group = QActionGroup(monitor_menu)
@@ -894,6 +930,11 @@ class VigIA(QObject):
         for window in self.windows:
             window.place(force=True)
 
+    def set_metric(self, provider_id, choice):
+        """Pick which limit of a provider the pill shows ("auto" = most used)."""
+        self.config.set_metric(provider_id, choice)
+        self.refresh_rows()
+
     def set_language(self, value):
         self.config.set("language", value)
         for window in self.windows:
@@ -916,7 +957,7 @@ class VigIA(QObject):
         core.set_autostart(enabled, self.command_line())
 
     def submenu(self, parent, title):
-        sub = StickyMenu(keep_open=False, parent=parent)
+        sub = StickyMenu(parent=parent)
         sub.setTitle(title)
         sub.setStyleSheet(MENU_QSS)
         parent.addMenu(sub)

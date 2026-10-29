@@ -14,7 +14,7 @@ import tomllib
 from datetime import datetime
 
 APP_NAME = "VigIA"
-VERSION = "2.1.1"
+VERSION = "2.2.0"
 IS_WINDOWS = platform.system() == "Windows"
 HOME = os.path.expanduser("~")
 MARGIN = 18
@@ -55,6 +55,9 @@ STRINGS = {
         "menu_anchor": "Posição",
         "menu_language": "Idioma",
         "menu_items": "Itens",
+        "menu_metric": "O que vigiar",
+        "metric_auto": "Maior uso (automático)",
+        "metric_waiting": "Aguardando dados…",
         "size_small": "Pequeno", "size_medium": "Médio", "size_large": "Grande",
         "icons_brand": "Cor da marca", "icons_mono": "Monocromático",
         "icons_alert": "Alerta por uso",
@@ -85,6 +88,9 @@ STRINGS = {
         "menu_anchor": "Position",
         "menu_language": "Language",
         "menu_items": "Items",
+        "menu_metric": "What to watch",
+        "metric_auto": "Most used (auto)",
+        "metric_waiting": "Waiting for data…",
         "size_small": "Small", "size_medium": "Medium", "size_large": "Large",
         "icons_brand": "Brand colour", "icons_mono": "Monochrome",
         "icons_alert": "Usage alert",
@@ -115,6 +121,9 @@ STRINGS = {
         "menu_anchor": "Posición",
         "menu_language": "Idioma",
         "menu_items": "Elementos",
+        "menu_metric": "Qué vigilar",
+        "metric_auto": "Mayor uso (automático)",
+        "metric_waiting": "Esperando datos…",
         "size_small": "Pequeño", "size_medium": "Mediano", "size_large": "Grande",
         "icons_brand": "Color de marca", "icons_mono": "Monocromático",
         "icons_alert": "Alerta por uso",
@@ -145,6 +154,9 @@ STRINGS = {
         "menu_anchor": "Position",
         "menu_language": "Langue",
         "menu_items": "Éléments",
+        "menu_metric": "Quoi surveiller",
+        "metric_auto": "Le plus utilisé (auto)",
+        "metric_waiting": "En attente des données…",
         "size_small": "Petit", "size_medium": "Moyen", "size_large": "Grand",
         "icons_brand": "Couleur de marque", "icons_mono": "Monochrome",
         "icons_alert": "Alerte d'usage",
@@ -175,6 +187,9 @@ STRINGS = {
         "menu_anchor": "Position",
         "menu_language": "Sprache",
         "menu_items": "Elemente",
+        "menu_metric": "Was überwachen",
+        "metric_auto": "Höchste Nutzung (automatisch)",
+        "metric_waiting": "Warte auf Daten…",
         "size_small": "Klein", "size_medium": "Mittel", "size_large": "Groß",
         "icons_brand": "Markenfarbe", "icons_mono": "Einfarbig",
         "icons_alert": "Nutzungswarnung",
@@ -278,10 +293,12 @@ class Config:
         self.path = path or CONFIG_PATH
         self.values = dict(DEFAULTS)
         self.positions = {}
+        self.metrics = {}
         self.load()
 
     def load(self):
         self.positions = {}
+        self.metrics = {}
         if not os.path.isfile(self.path) and os.path.isfile(LEGACY_CONFIG):
             try:
                 os.makedirs(os.path.dirname(self.path), exist_ok=True)
@@ -315,6 +332,12 @@ class Config:
                     self.positions[str(key)] = (int(x), int(y))
                 except (TypeError, ValueError):
                     continue
+        choices = raw.get("metrics") or {}
+        if isinstance(choices, dict):
+            for key, value in choices.items():
+                choice = str(value or "").strip()
+                if key and choice:
+                    self.metrics[str(key).lower()] = choice
         self.sanitize()
         if not os.path.isfile(self.path):
             self.save()
@@ -355,6 +378,11 @@ class Config:
             for key in sorted(self.positions):
                 x, y = self.positions[key]
                 lines.append(f'"{key}" = [{int(x)}, {int(y)}]')
+        if self.metrics:
+            lines.append("")
+            lines.append("[overlay.metrics]")
+            for key in sorted(self.metrics):
+                lines.append(f'"{key}" = {_toml_value(self.metrics[key])}')
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             with open(self.path, "w", encoding="utf-8") as handle:
@@ -364,6 +392,18 @@ class Config:
 
     def set(self, key, value):
         self.values[key] = value
+        self.save()
+
+    def metric_choice(self, provider_id):
+        """Which metric of a provider to show: "auto" or a reported label."""
+        return self.metrics.get(str(provider_id).lower(), "auto")
+
+    def set_metric(self, provider_id, choice):
+        key = str(provider_id).lower()
+        if choice and str(choice).strip().lower() != "auto":
+            self.metrics[key] = str(choice).strip()
+        else:
+            self.metrics.pop(key, None)
         self.save()
 
     def get(self, key):
@@ -456,12 +496,43 @@ def metric_display(metric):
     return str(metric.get("value") or "—")
 
 
-def summary_metric(entry):
+def quota_metrics(entry):
+    """Metrics that describe a quota window, in report order."""
     metrics = entry.get("metrics") or []
-    quota = [metric for metric in metrics if not metric.get("group")] or metrics
-    if not quota:
+    return [metric for metric in metrics if not metric.get("group")] or list(metrics)
+
+
+def metric_slug(value):
+    """Label as lowercase letters/digits, so "Weekly (7d)" == "weekly 7d"."""
+    text = value.get("label") if isinstance(value, dict) else value
+    return "".join(char for char in str(text or "").lower() if char.isalnum())
+
+
+def matching_metric(entry, choice):
+    """The reported metric whose label matches `choice`; None when it is gone."""
+    wanted = metric_slug(choice)
+    if not wanted:
         return None
-    return max(quota, key=lambda item: item.get("percent") or 0)
+    for metric in quota_metrics(entry):
+        if metric_slug(metric) == wanted:
+            return metric
+    return None
+
+
+def pick_metric(entry, choice="auto"):
+    """Metric shown for a provider: the chosen label, else the most consumed one."""
+    metrics = quota_metrics(entry)
+    if not metrics:
+        return None
+    if str(choice or "").strip().lower() != "auto":
+        chosen = matching_metric(entry, choice)
+        if chosen is not None:
+            return chosen
+    return max(metrics, key=lambda item: item.get("percent") or 0)
+
+
+def summary_metric(entry):
+    return pick_metric(entry)
 
 
 def dashboard_entries(data):
@@ -497,15 +568,18 @@ def fetch_report(binary=None, timeout=25):
     return json.loads(result.stdout)
 
 
-def provider_rows(report, limit=4):
+def provider_rows(report, limit=4, choices=None):
+    """One row per provider, showing the metric each provider is set to."""
+    choices = choices or {}
     rows = []
     for entry in dashboard_entries(report):
-        metric = summary_metric(entry)
+        provider_id = str(entry.get("id") or entry.get("brand") or "")
+        metric = pick_metric(entry, choices.get(provider_id.lower(), "auto"))
         if metric is None:
             continue
         brand = str(entry.get("brand") or entry.get("id") or "").split("@", 1)[0]
         rows.append({
-            "id": str(entry.get("id") or brand),
+            "id": provider_id or brand,
             "brand": brand,
             "name": str(entry.get("display_name") or entry.get("name") or brand),
             "value": metric_display(metric),

@@ -22,6 +22,9 @@ CPU, RAM e GPU na mesma linha.
 - **Largura estável**: a pílula não muda de tamanho quando o uso oscila.
 - **Ícones** em três estilos: cor da marca, monocromático, ou monocromático com alerta de cor quando o uso aperta.
 - **CPU / RAM / GPU** opcionais, desligados por padrão.
+- **Qual limite mostrar**: em *O que vigiar*, escolha por provedor a janela que
+  importa — sessão de 5h, semanal, mensal — ou um limite do próprio plano, como o
+  `Fable (7d)` do Claude. O padrão é o mais consumido.
 - **Cinco idiomas**: português, inglês, espanhol, francês e alemão (ou automático pelo sistema).
 - **Atalho global** e autostart opcional.
 
@@ -65,8 +68,8 @@ Ao abrir, a pílula aparece no canto superior direito do monitor principal.
 
 - **Passar o mouse** clareia o fundo e revela a engrenagem de configurações.
 - **Arrastar** move a pílula; a posição fica salva por monitor.
-- **Engrenagem** (ou botão direito) abre o menu com todos os ajustes. O menu
-  **fica aberto** enquanto você muda as opções — só *Esconder* e *Sair* o fecham.
+- **Engrenagem** (ou botão direito) abre o menu com todos os ajustes. O menu e os
+  submenus **ficam abertos** enquanto você muda as opções — só *Esconder* e *Sair* fecham.
 - **Atalho padrão `Ctrl+Alt+U`** mostra/esconde (e inicia, se não estiver rodando).
 - **Sair de verdade** é pelo menu → *Sair*.
 
@@ -98,6 +101,10 @@ alert_warn = 60         # icon_style = "alert": âmbar a partir daqui
 alert_critical = 80     # ... e vermelho a partir daqui
 hide_providers = ""     # ids separados por vírgula: "openai,gemini"
 hide_system = ""        # "cpu,ram,gpu" para esconder itens do sistema
+
+[overlay.metrics]       # qual limite cada provedor mostra (padrão: o maior uso)
+anthropic = "Weekly (7d)"
+"opencode-go" = "Rolling (5h)"
 ```
 
 Para escolher o que aparece, use o menu **Itens** (checkbox por provedor e por
@@ -128,8 +135,8 @@ Disponíveis: `pt`, `en`, `es`, `fr`, `de`.
 
 ## Como os dados são lidos
 
-- **Provedores**: `ai-usagebar usage --json`, a cada 5 minutos. Cada pílula mostra o
-  valor principal (*headline*) do relatório daquele provedor.
+- **Provedores**: `ai-usagebar usage --json`, a cada 5 minutos. Cada pílula mostra um
+  limite daquele provedor: o escolhido em *O que vigiar* ou, no padrão, o mais consumido.
 - **CPU/RAM**: `psutil` quando disponível; no Linux, `/proc/stat` e `/proc/meminfo`; no Windows, a API do sistema.
 - **GPU**: `gpu_busy_percent` do `sysfs` (Linux) ou `nvidia-smi` (quando existe).
 

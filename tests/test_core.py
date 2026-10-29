@@ -99,6 +99,21 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(again.get("language"), "en")
                 self.assertEqual(again.positions["screen"], (12, 34))
 
+    def test_metric_choices_roundtrip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "vigia.toml")
+            with mock.patch.object(core, "LEGACY_CONFIG", os.path.join(directory, "missing.toml")):
+                config = core.Config(path)
+                self.assertEqual(config.metric_choice("anthropic"), "auto")
+                config.set_metric("Anthropic", "Weekly (7d)")
+                config.set_metric("openai", "auto")
+                self.assertEqual(config.metric_choice("anthropic"), "Weekly (7d)")
+                self.assertEqual(config.metric_choice("openai"), "auto")
+                again = core.Config(path)
+                self.assertEqual(again.metric_choice("anthropic"), "Weekly (7d)")
+                again.set_metric("anthropic", "auto")
+                self.assertNotIn("anthropic", core.Config(path).metrics)
+
     def test_screen_names_are_valid_monitors(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "vigia.toml")
@@ -150,6 +165,32 @@ class ProviderTests(unittest.TestCase):
     def test_summary_prefers_quota_metric(self):
         entry = {"metrics": [{"percent": 10, "group": "sessions"}, {"percent": 70}]}
         self.assertEqual(core.summary_metric(entry)["percent"], 70)
+
+    def test_pick_metric_follows_the_chosen_label(self):
+        entry = {"metrics": [
+            {"label": "Session (5h)", "percent": 4},
+            {"label": "Weekly (7d)", "percent": 57},
+            {"label": "Fable (7d)", "percent": 100},
+        ]}
+        self.assertEqual(core.pick_metric(entry)["label"], "Fable (7d)")
+        self.assertEqual(core.pick_metric(entry, "Weekly (7d)")["label"], "Weekly (7d)")
+        self.assertEqual(core.pick_metric(entry, "weekly 7D")["label"], "Weekly (7d)")
+
+    def test_pick_metric_falls_back_when_the_label_is_gone(self):
+        entry = {"metrics": [{"label": "Session (5h)", "percent": 4},
+                             {"label": "Weekly (7d)", "percent": 57}]}
+        self.assertEqual(core.pick_metric(entry, "Fable (7d)")["label"], "Weekly (7d)")
+        self.assertIsNone(core.matching_metric(entry, "Fable (7d)"))
+
+    def test_rows_use_the_configured_metric(self):
+        report = {"entries": [{"id": "anthropic", "brand": "anthropic", "display_name": "Claude",
+                               "metrics": [{"label": "Session (5h)", "percent": 4},
+                                           {"label": "Weekly (7d)", "percent": 57}]}]}
+        auto = core.provider_rows(report)
+        chosen = core.provider_rows(report, choices={"anthropic": "Session (5h)"})
+        self.assertEqual(auto[0]["value"], "57%")
+        self.assertEqual(chosen[0]["value"], "4%")
+        self.assertEqual(chosen[0]["label"], "Session (5h)")
 
     def test_value_headline_is_used_verbatim(self):
         self.assertEqual(core.metric_display({"headline": "value", "value": "$3.20"}), "$3.20")
