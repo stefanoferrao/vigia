@@ -166,6 +166,21 @@ class AlertTests(unittest.TestCase):
         self.assertEqual(core.value_tint("brand", 99), core.THEME["text-primary"])
         self.assertEqual(core.value_tint("alert", 30, warn=20, critical=25), critical)
 
+    def test_bar_and_critical(self):
+        core.set_theme(core.THEME_DEFAULT)
+        self.assertEqual(core.bar_tint("alert", 90), core.THEME["state-critical"])
+        self.assertEqual(core.bar_tint("brand", 90), core.THEME["primary"])
+        self.assertEqual(core.bar_tint("alert", None), core.THEME["primary"])
+        self.assertTrue(core.is_critical("alert", 80))
+        self.assertFalse(core.is_critical("alert", 79))
+        self.assertFalse(core.is_critical("brand", 99))
+
+    def test_accent_overrides_primary(self):
+        core.set_theme("light", accent="#ff00aa")
+        self.assertEqual(core.THEME["primary"], "#ff00aa")
+        core.set_theme("light", accent="not-a-colour")
+        self.assertEqual(core.THEME["primary"], "#0066cc")
+
     def test_themes_load_and_fall_back(self):
         names = dict(core.list_themes())
         self.assertIn(core.THEME_DEFAULT, names)

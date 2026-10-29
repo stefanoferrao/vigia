@@ -22,7 +22,7 @@ from PySide6.QtGui import (
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QApplication, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
-                               QMenu, QSizePolicy, QSpacerItem, QWidget)
+                               QColorDialog, QMenu, QSizePolicy, QSpacerItem, QWidget)
 
 import vigia_core as core
 
@@ -41,6 +41,11 @@ ISLAND_COLLAPSE_MS = 400
 ISLAND_EXPAND_MS = 340  # unfold: fast start, long soft landing
 ISLAND_HIDE_MS = 240    # fold back: content leaves first, then the pill closes
 MAX_WIDGET_SIZE = 16777215
+FADE_MS = 220           # colour cross-fade when a reading changes state
+HOVER_MS = 140          # border warms up to the accent under the cursor
+PULSE_MS = 2000         # one breath of a critical reading
+SHADOW_PAD = 12         # soft shadow around the pill: extent, and offset below
+SHADOW_DROP = 3
 def menu_qss():
     """Menu stylesheet built from the active theme."""
     t = core.THEME
@@ -50,8 +55,9 @@ QMenu {{
     color: {t['text-primary']};
     border: 1px solid {t['menu-border']};
     padding: 4px;
+    border-radius: 8px;
 }}
-QMenu::item {{ padding: 5px 22px 5px 22px; border-radius: 4px; }}
+QMenu::item {{ padding: 5px 22px 5px 22px; border-radius: 5px; }}
 QMenu::item:selected {{ background-color: {t['menu-hover']}; }}
 QMenu::item:disabled {{ color: {t['text-disabled']}; }}
 QMenu::separator {{ height: 1px; background: {t['menu-border']}; margin: 4px 6px; }}
@@ -266,6 +272,13 @@ class StickyMenu(QMenu):
     changed in a row; only actions flagged with "closes_menu" close the popup.
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # A translucent, frameless popup lets the stylesheet round the corners.
+        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint
+                            | Qt.NoDropShadowWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
     def _activate(self, action):
         if action is None or not action.isEnabled() or action.menu() is not None:
             return False
@@ -320,6 +333,153 @@ class GearLabel(QLabel):
         super().mouseReleaseEvent(event)
 
 
+def mix(a, b, t):
+    """Linear blend of two QColors, t = 0 -> a, t = 1 -> b."""
+    return QColor(*(round(x + (y - x) * t) for x, y in (
+        (a.red(), b.red()), (a.green(), b.green()),
+        (a.blue(), b.blue()), (a.alpha(), b.alpha()))))
+
+
+def drop(widget):
+    """deleteLater() that tolerates a widget Qt already tore down (app shutdown)."""
+    try:
+        widget.deleteLater()
+    except RuntimeError:
+        pass
+
+
+class Reading(QWidget):
+    """A number with a thin usage bar underneath.
+
+    A change of state cross-fades the colours instead of snapping, and a critical
+    value breathes with the pill's shared pulse.
+    """
+    BAR = 2
+
+    def __init__(self, pill, key, text, percent, colors):
+        super().__init__()
+        self.pill = pill
+        self.key = key
+        self.text = text
+        self.percent = percent
+        self.anim = None
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+        font = QFont(self.font())
+        font.setPixelSize(pill.css["font"])
+        font.setBold(True)
+        if hasattr(font, "setFeature"):
+            font.setFeature(QFont.Tag("tnum"), 1)  # steady digit width: numbers don't jitter
+        self.setFont(font)
+        metrics = QFontMetrics(font)
+        self.bars = bool(pill.app.config.get("bars"))
+        self.text_height = metrics.height()
+        # Fixed "100%" slot: the icon -> number gap stays constant whatever the number is.
+        self.setFixedWidth(metrics.horizontalAdvance("100%") + 2)
+        self.setFixedHeight(max(self.text_height, metrics.ascent() + 2 + self.BAR + 1)
+                            if self.bars else self.text_height)
+
+        tint, bar, self.critical = colors
+        self.tint, self.bar = (QColor(c) for c in pill.tint_memory.get(key, (tint, bar)))
+        self.target = (QColor(self.tint), QColor(self.bar))
+        self.retarget(colors)
+
+    def set_reading(self, text, percent, colors):
+        self.text = text
+        self.percent = percent
+        self.retarget(colors)
+        self.update()
+
+    def retarget(self, colors):
+        tint, bar, self.critical = colors
+        tint, bar = QColor(tint), QColor(bar)
+        self.pill.tint_memory[self.key] = (tint, bar)
+        if (tint, bar) == self.target:
+            return
+        self.target = (tint, bar)
+        if self.anim is not None:
+            self.anim.stop()
+        start = (QColor(self.tint), QColor(self.bar))
+        anim = QVariantAnimation(self)
+        anim.setDuration(FADE_MS)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.valueChanged.connect(lambda t: self.fade(start, t))
+        self.anim = anim
+        anim.start()
+
+    def fade(self, start, t):
+        self.tint = mix(start[0], self.target[0], t)
+        self.bar = mix(start[1], self.target[1], t)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        width = self.width() - 2
+        if self.bars and isinstance(self.percent, (int, float)):
+            y = self.height() - self.BAR
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(core.THEME["divider"]))
+            painter.drawRoundedRect(0, y, width, self.BAR, 1, 1)
+            fill = round(width * max(0.0, min(100.0, self.percent)) / 100)
+            if fill > 0:
+                painter.setOpacity(self.pulse_opacity())
+                painter.setBrush(self.bar)
+                painter.drawRoundedRect(0, y, max(fill, self.BAR), self.BAR, 1, 1)
+        painter.setOpacity(self.pulse_opacity())
+        painter.setFont(self.font())
+        painter.setPen(self.tint)
+        painter.drawText(QRect(0, 0, self.width(), self.text_height),
+                         Qt.AlignLeft | Qt.AlignVCenter, self.text)
+        painter.end()
+
+    def pulse_opacity(self):
+        if self.critical and self.pill.pulse_running():
+            return 1.0 - 0.35 * self.pill.pulse_value
+        return 1.0
+
+
+class Shadow(QWidget):
+    """Click-through window behind a pill that paints its soft drop shadow."""
+
+    def __init__(self, pill):
+        flags = (Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus
+                 | Qt.WindowTransparentForInput)
+        if pill.app.config.get("always_on_top"):
+            flags |= Qt.WindowStaysOnTopHint
+        super().__init__(None, flags)
+        self.pill = pill
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+    def follow(self):
+        area = self.pill.screen.geometry()
+        self.setGeometry(self.pill.geometry().adjusted(
+            -SHADOW_PAD, -SHADOW_PAD, SHADOW_PAD, SHADOW_PAD).intersected(area))
+
+    def paintEvent(self, event):
+        inner = self.pill.geometry().translated(-self.x(), -self.y()).adjusted(0, 0, -1, -1)
+        dark = QColor(core.THEME["surface"]).lightness() < 128
+        color = QColor(0, 0, 0, 7 if dark else 5)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        base = inner.translated(0, SHADOW_DROP)
+        for grow in range(SHADOW_PAD - SHADOW_DROP, 0, -1):
+            ring = base.adjusted(-grow, -grow, grow, grow)
+            path = QPainterPath()
+            path.addRoundedRect(ring, ring.height() / 2, ring.height() / 2)
+            painter.fillPath(path, color)
+        # Keep the pill itself clean: a translucent pill must not darken from below.
+        painter.setCompositionMode(QPainter.CompositionMode_Clear)
+        cut = QPainterPath()
+        cut.addRoundedRect(inner, inner.height() / 2, inner.height() / 2)
+        painter.fillPath(cut, Qt.transparent)
+        painter.end()
+
+
 class Pill(QWidget):
     def __init__(self, app, screen_index):
         flags = Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus
@@ -333,10 +493,17 @@ class Pill(QWidget):
         self.drag_offset = None
         self.drag_origin = QPoint(0, 0)
         self.drag_started = False
-        self.value_labels = []
+        self.readings = []
         self.system_labels = {}
+        self.tint_memory = {}     # last colours per reading key, for cross-fades across rebuilds
+        self.pulse_value = 0.0
+        self.pulse_anim = None
+        self.hover_t = 0.0
+        self.hover_anim = None
         self.rows = []
         self.island_open = False
+        self.shadow = Shadow(self)
+        self.destroyed.connect(lambda *_, shadow=self.shadow: drop(shadow))
 
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
@@ -374,26 +541,21 @@ class Pill(QWidget):
             if widget is not None:
                 widget.hide()  # gone this frame, not at the next event-loop turn
                 widget.deleteLater()
-        self.value_labels = []
+        self.readings = []
         self.system_labels = {}
 
-    def value_label(self, text, tint):
-        label = QLabel(text)
-        font = QFont(label.font())
-        font.setPixelSize(self.css["font"])
-        font.setBold(True)
-        if hasattr(font, "setFeature"):
-            font.setFeature(QFont.Tag("tnum"), 1)  # steady digit width: numbers don't jitter
-        label.setFont(font)
-        # Left-aligned inside a fixed "100%" slot: the icon -> number gap stays
-        # constant whatever the number is, and the block gap stays visibly bigger.
-        label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        metrics = QFontMetrics(font)
-        label.setFixedWidth(metrics.horizontalAdvance("100%") + 2)
-        label.setStyleSheet(f"color: {tint};")
-        label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.value_labels.append(label)
-        return label
+    def reading_colors(self, percent):
+        config = self.app.config
+        style = config.get("icon_style")
+        warn, critical = config.get("alert_warn"), config.get("alert_critical")
+        return (core.value_tint(style, percent, warn, critical),
+                core.bar_tint(style, percent, warn, critical),
+                core.is_critical(style, percent, critical))
+
+    def reading(self, key, text, percent):
+        widget = Reading(self, key, text, percent, self.reading_colors(percent))
+        self.readings.append(widget)
+        return widget
 
     def muted_label(self, text):
         label = QLabel(text)
@@ -457,9 +619,7 @@ class Pill(QWidget):
                 icon.setFixedSize(self.css["icon"], self.css["icon"])
                 icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                 self.box.addWidget(icon)
-            value = self.value_label(row["value"], core.value_tint(
-                style, row["percent"], self.app.config.get("alert_warn"),
-                self.app.config.get("alert_critical")))
+            value = self.reading(f"provider:{row['id']}", row["value"], row["percent"])
             value.setToolTip(f"{row['name']} — {row['label']}" if row["label"] else row["name"])
             self.box.addWidget(value)
 
@@ -476,9 +636,7 @@ class Pill(QWidget):
                     self.add_gap(self.block_gap())
                 counted += 1
                 self.box.addWidget(self.muted_label(name))
-                value = self.value_label(f"{reading}%", core.value_tint(
-                    style, reading, self.app.config.get("alert_warn"),
-                    self.app.config.get("alert_critical")))
+                value = self.reading(f"system:{name}", f"{reading}%", reading)
                 self.box.addWidget(value)
                 self.system_labels[name] = value
 
@@ -512,7 +670,12 @@ class Pill(QWidget):
             painter.setPen(QPen(QColor(255, 255, 255, 18), 1))
             painter.drawLine(int(radius), 1, int(rect.width() - radius), 1)
             painter.setClipping(False)
-        painter.setPen(QPen(QColor(core.THEME["surface-border"]), 1))
+        border = QColor(core.THEME["surface-border"])
+        if self.hover_t > 0:
+            accent = QColor(core.THEME["primary"])
+            accent.setAlpha(190)
+            border = mix(border, accent, self.hover_t)
+        painter.setPen(QPen(border, 1))
         painter.drawPath(path)
         painter.end()
 
@@ -688,6 +851,68 @@ class Pill(QWidget):
             return
         self.set_island_open(False)
 
+    # -- motion --------------------------------------------------------------
+    def animate_hover(self, inside):
+        if self.hover_anim is not None:
+            self.hover_anim.stop()
+        anim = QVariantAnimation(self)
+        anim.setDuration(HOVER_MS)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.setStartValue(self.hover_t)
+        anim.setEndValue(1.0 if inside else 0.0)
+        anim.valueChanged.connect(self.set_hover_t)
+        self.hover_anim = anim
+        anim.start()
+
+    def set_hover_t(self, value):
+        self.hover_t = float(value)
+        self.update()
+
+    def pulse_running(self):
+        return self.pulse_anim is not None and self.pulse_anim.state() == QAbstractAnimation.Running
+
+    def sync_pulse(self):
+        """Breathe only while a critical value is actually on screen."""
+        shown = self.isVisible() and (self.island_open or not self.island_on())
+        wanted = (shown and bool(self.app.config.get("pulse"))
+                  and any(reading.critical for reading in self.readings))
+        if wanted and not self.pulse_running():
+            anim = QVariantAnimation(self)
+            anim.setDuration(PULSE_MS)
+            anim.setLoopCount(-1)
+            anim.setEasingCurve(QEasingCurve.InOutSine)
+            anim.setKeyValueAt(0.0, 0.0)
+            anim.setKeyValueAt(0.5, 1.0)
+            anim.setKeyValueAt(1.0, 0.0)
+            anim.valueChanged.connect(self.set_pulse_value)
+            self.pulse_anim = anim
+            anim.start()
+        elif not wanted and self.pulse_running():
+            self.pulse_anim.stop()
+            self.set_pulse_value(0.0)
+
+    def set_pulse_value(self, value):
+        self.pulse_value = float(value)
+        for reading in self.readings:
+            if reading.critical:
+                reading.update()
+
+    # -- window follow -------------------------------------------------------
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self.shadow.follow()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.shadow.follow()
+        self.shadow.show()
+        QTimer.singleShot(0, self.raise_)  # shadow first, pill on top of it
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self.shadow.hide()
+        self.sync_pulse()
+
     # -- interaction ---------------------------------------------------------
     def poll_hover(self):
         if self.drag_offset is not None and QGuiApplication.mouseButtons() == Qt.NoButton:
@@ -697,8 +922,9 @@ class Pill(QWidget):
         if inside != self.hovered:
             self.hovered = inside
             self.gear_effect.setOpacity(1.0 if inside else 0.0)
-            self.update()
+            self.animate_hover(inside)
         self.sync_island()
+        self.sync_pulse()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -781,6 +1007,7 @@ class Pill(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.shadow.follow()
         self.center_content()
         # adjustSize() finishes after the layout runs, so re-anchor here with the
         # real width instead of the previous one.
@@ -793,6 +1020,7 @@ class Pill(QWidget):
                                     max(2, self.css["pad_h"] - 2), self.css["pad_v"])
         self.box.setSpacing(self.css["gap"])
         self.build()
+        self.shadow.update()
 
     def set_rows(self, rows):
         self.rows = rows
@@ -804,7 +1032,8 @@ class Pill(QWidget):
         for name, reading in self.app.metrics.snapshot():
             label = self.system_labels.get(name)
             if label is not None and reading is not None:
-                label.setText(f"{reading}%")
+                label.set_reading(f"{reading}%", reading, self.reading_colors(reading))
+        self.sync_pulse()
 
     def show_menu(self):
         self.app.popup_menu(self)
@@ -831,7 +1060,8 @@ class VigIA(QObject):
         self.server = None
         self.data_ready.connect(self.apply_report)
 
-        core.set_theme(self.config.get("theme"), self.system_is_dark())
+        core.set_theme(self.config.get("theme"), self.system_is_dark(),
+                       self.config.get("accent"))
         hints = QGuiApplication.styleHints()
         if hasattr(hints, "colorSchemeChanged"):
             hints.colorSchemeChanged.connect(
@@ -1046,6 +1276,13 @@ class VigIA(QObject):
             action.triggered.connect(lambda _=False, value=key: self.set_theme(value))
             group.addAction(action)
             theme_menu.addAction(action)
+        theme_menu.addSeparator()
+        pick = theme_menu.addAction(self.config.t("accent_pick"))
+        pick.setProperty("closes_menu", True)
+        pick.triggered.connect(lambda: QTimer.singleShot(0, self.pick_accent))
+        if self.config.get("accent"):
+            reset = theme_menu.addAction(self.config.t("accent_reset"))
+            reset.triggered.connect(lambda: self.set_accent(""))
 
         icons_menu = self.submenu(menu, self.config.t("menu_icons"))
         group = QActionGroup(icons_menu)
@@ -1176,6 +1413,18 @@ class VigIA(QObject):
         system.toggled.connect(self.set_show_system)
         menu.addAction(system)
 
+        bars = QAction(self.config.t("menu_bars"), menu)
+        bars.setCheckable(True)
+        bars.setChecked(self.config.get("bars"))
+        bars.toggled.connect(self.set_bars)
+        menu.addAction(bars)
+
+        pulse = QAction(self.config.t("menu_pulse"), menu)
+        pulse.setCheckable(True)
+        pulse.setChecked(self.config.get("pulse"))
+        pulse.toggled.connect(self.set_pulse)
+        menu.addAction(pulse)
+
         autostart = QAction(self.config.t("autostart"), menu)
         autostart.setCheckable(True)
         autostart.setChecked(self.config.get("autostart"))
@@ -1210,10 +1459,31 @@ class VigIA(QObject):
         return scheme is None or scheme() != Qt.ColorScheme.Light
 
     def apply_theme(self):
-        core.set_theme(self.config.get("theme"), self.system_is_dark())
+        core.set_theme(self.config.get("theme"), self.system_is_dark(),
+                       self.config.get("accent"))
         for window in self.windows:
             window.rebuild()
             window.update()
+
+    def set_accent(self, value):
+        self.config.set("accent", value)
+        self.apply_theme()
+
+    def pick_accent(self):
+        color = QColorDialog.getColor(QColor(core.THEME["primary"]), None,
+                                      self.config.t("accent_pick"))
+        if color.isValid():
+            self.set_accent(color.name())
+
+    def set_bars(self, enabled):
+        self.config.set("bars", enabled)
+        for window in self.windows:
+            window.rebuild()
+
+    def set_pulse(self, enabled):
+        self.config.set("pulse", enabled)
+        for window in self.windows:
+            window.sync_pulse()
 
     def set_theme(self, value):
         self.config.set("theme", value)

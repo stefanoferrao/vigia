@@ -136,7 +136,7 @@ para `[overlay.island_offsets]`, que guarda só o deslocamento horizontal.
 
 O visual segue o formato [DESIGN.md](https://github.com/google-labs-code/design.md): cada tema é um arquivo `.md` cujo front matter define as cores (`surface`, `text-primary`, `state-ok`, `state-warning`, `state-critical`, `primary`, ...). O tema padrão é o [`DESIGN.md`](DESIGN.md) da raiz.
 
-Temas incluídos em [`themes/`](themes/): Midnight, Graphite, Light, Aurora, Sunset e Mono High Contrast (AAA). Escolha em engrenagem → **Tema**, ou use **Automático (sistema)** para alternar entre escuro e claro conforme o sistema. Para criar o seu, copie um arquivo de `themes/` para `~/.config/vigia/themes/`, edite as cores e valide com `npx @google/design.md lint <arquivo>`; ele aparece no menu.
+Temas incluídos em [`themes/`](themes/): Midnight, Graphite, Light, Aurora, Sunset e Mono High Contrast (AAA). Escolha em engrenagem → **Tema**, ou use **Automático (sistema)** para alternar entre escuro e claro conforme o sistema. **Cor de realce…** (no mesmo submenu) troca a cor principal de qualquer tema. Cada número ganha uma barra fina de uso (menu **Barras de progresso**), e no modo "Alerta por uso" os valores críticos pulsam suavemente (menu **Pulsar em estado crítico**). Para criar o seu, copie um arquivo de `themes/` para `~/.config/vigia/themes/`, edite as cores e valide com `npx @google/design.md lint <arquivo>`; ele aparece no menu.
 
 ## Idiomas
 

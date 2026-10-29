@@ -52,6 +52,10 @@ STRINGS = {
         "menu_opacity": "Transparência",
         "menu_size": "Tamanho",
         "menu_icons": "Ícones",
+        "menu_bars": "Barras de progresso",
+        "menu_pulse": "Pulsar em estado crítico",
+        "accent_pick": "Cor de realce…",
+        "accent_reset": "Restaurar cor de realce",
         "menu_theme": "Tema",
         "theme_auto": "Automático (sistema)",
         "menu_monitor": "Monitor",
@@ -88,6 +92,10 @@ STRINGS = {
         "menu_opacity": "Opacity",
         "menu_size": "Size",
         "menu_icons": "Icons",
+        "menu_bars": "Progress bars",
+        "menu_pulse": "Pulse when critical",
+        "accent_pick": "Accent color…",
+        "accent_reset": "Reset accent color",
         "menu_theme": "Theme",
         "theme_auto": "Automatic (system)",
         "menu_monitor": "Monitor",
@@ -124,6 +132,10 @@ STRINGS = {
         "menu_opacity": "Opacidad",
         "menu_size": "Tamaño",
         "menu_icons": "Iconos",
+        "menu_bars": "Barras de progreso",
+        "menu_pulse": "Pulsar en estado crítico",
+        "accent_pick": "Color de acento…",
+        "accent_reset": "Restaurar color de acento",
         "menu_theme": "Tema",
         "theme_auto": "Automático (sistema)",
         "menu_monitor": "Monitor",
@@ -160,6 +172,10 @@ STRINGS = {
         "menu_opacity": "Opacité",
         "menu_size": "Taille",
         "menu_icons": "Icônes",
+        "menu_bars": "Barres de progression",
+        "menu_pulse": "Pulser en état critique",
+        "accent_pick": "Couleur d'accent…",
+        "accent_reset": "Réinitialiser la couleur d'accent",
         "menu_theme": "Thème",
         "theme_auto": "Automatique (système)",
         "menu_monitor": "Écran",
@@ -196,6 +212,10 @@ STRINGS = {
         "menu_opacity": "Deckkraft",
         "menu_size": "Größe",
         "menu_icons": "Symbole",
+        "menu_bars": "Fortschrittsbalken",
+        "menu_pulse": "Pulsieren bei kritischem Wert",
+        "accent_pick": "Akzentfarbe…",
+        "accent_reset": "Akzentfarbe zurücksetzen",
         "menu_theme": "Design",
         "theme_auto": "Automatisch (System)",
         "menu_monitor": "Monitor",
@@ -253,6 +273,9 @@ DEFAULTS = {
     "hotkey": "<Control><Alt>v",
     "language": "auto",
     "theme": "vigia",            # vigia | auto | any file stem in themes/ (DESIGN.md tokens)
+    "accent": "",                # "#rrggbb" overrides the theme's primary colour
+    "bars": True,                # thin usage bar under each number
+    "pulse": True,               # icon_style = "alert": critical values breathe
     "alert_warn": 60,        # icon_style = "alert": amber from this percentage
     "alert_critical": 80,    # ... and red from this one
     "hide_providers": "",    # comma-separated provider ids to keep out of the pill
@@ -382,6 +405,8 @@ class Config:
             self.values["anchor"] = DEFAULTS["anchor"]
         if not str(self.values["theme"]).strip():
             self.values["theme"] = DEFAULTS["theme"]
+        if not re.match(r"^#[0-9a-fA-F]{6}$", self.values["accent"]):
+            self.values["accent"] = ""
         if self.values["language"] not in STRINGS and self.values["language"] != "auto":
             self.values["language"] = DEFAULTS["language"]
         self.values["refresh_minutes"] = max(1, min(60, self.values["refresh_minutes"]))
@@ -879,8 +904,10 @@ def list_themes():
     return list(found.items())
 
 
-def set_theme(name, dark=True):
-    """Activate a theme by id ("auto" follows `dark`); unknown ids fall back to VigIA Dark."""
+def set_theme(name, dark=True, accent=""):
+    """Activate a theme by id ("auto" follows `dark`); unknown ids fall back to VigIA Dark.
+
+    A valid `accent` ("#rrggbb") replaces the theme's primary colour."""
     name = str(name).strip().lower()
     if name == "auto":
         name = THEME_DEFAULT if dark else THEME_LIGHT
@@ -890,6 +917,8 @@ def set_theme(name, dark=True):
             parsed = parse_theme(os.path.join(directory, name + ".md"))
             if parsed:
                 colors.update({k: v for k, v in parsed["colors"].items() if k in colors})
+    if re.match(r"^#[0-9a-fA-F]{6}$", str(accent)):
+        colors["primary"] = accent
     THEME.clear()
     THEME.update(colors)
 
@@ -940,3 +969,14 @@ def value_tint(style, percent, warn=60, critical=80):
     if percent >= warn:
         return THEME["state-warning"]
     return THEME["state-ok"]
+
+
+def bar_tint(style, percent, warn=60, critical=80):
+    """Usage bar fill: the state colour in alert style, the accent otherwise."""
+    if style == "alert" and isinstance(percent, (int, float)):
+        return value_tint(style, percent, warn, critical)
+    return THEME["primary"]
+
+
+def is_critical(style, percent, critical=80):
+    return style == "alert" and isinstance(percent, (int, float)) and percent >= critical
