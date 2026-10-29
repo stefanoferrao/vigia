@@ -14,7 +14,7 @@ import time
 
 from PySide6.QtCore import (QAbstractAnimation, QByteArray, QCoreApplication, QEasingCurve,
                             QEvent, QObject, QPoint, QPropertyAnimation, QRect, Qt,
-                            QTimer, Signal)
+                            QTimer, QVariantAnimation, Signal)
 from PySide6.QtGui import (
     QAction, QActionGroup, QColor, QCursor, QFont, QFontMetrics, QGuiApplication,
     QIcon, QPainter, QPainterPath, QPen, QPixmap,
@@ -38,8 +38,8 @@ SERVER_NAME = "vigia"
 ISLAND_WIDTH = 120     # collapsed bar: a Dynamic-Island style handle at the top edge
 ISLAND_HEIGHT = 8
 ISLAND_COLLAPSE_MS = 400
-ISLAND_EXPAND_MS = 200  # unfold: slow down as the pill settles
-ISLAND_HIDE_MS = 160    # fold back: speed up into the bar
+ISLAND_EXPAND_MS = 340  # unfold: fast start, long soft landing
+ISLAND_HIDE_MS = 240    # fold back: content leaves first, then the pill closes
 MAX_WIDGET_SIZE = 16777215
 MENU_QSS = """
 QMenu {
@@ -350,7 +350,10 @@ class Pill(QWidget):
                                     max(2, self.css["pad_h"] - 2), self.css["pad_v"])
         self.box.setSpacing(self.css["gap"])
         self.island_anim = None
-        self.fade_anim = None
+        self.content_effect = QGraphicsOpacityEffect(self.content)
+        self.content_effect.setOpacity(1.0)
+        self.content_effect.setEnabled(False)
+        self.content.setGraphicsEffect(self.content_effect)
         self.build()
         self.hover_timer = QTimer(self)
         self.hover_timer.timeout.connect(self.poll_hover)
@@ -560,13 +563,24 @@ class Pill(QWidget):
             self.setFixedSize(ISLAND_WIDTH, ISLAND_HEIGHT)
             self.center_content()
         self.setWindowOpacity(1.0)
+        self.set_content_opacity(1.0)
 
     def island_busy(self):
         return (self.island_anim is not None
                 and self.island_anim.state() == QAbstractAnimation.Running)
 
+    def set_content_opacity(self, value):
+        value = max(0.0, min(1.0, value))
+        self.content_effect.setEnabled(value < 1.0)
+        self.content_effect.setOpacity(value)
+
     def animate_island(self, opened):
-        """Morph between the 8 px bar and the whole pill instead of snapping."""
+        """Morph between the 8 px bar and the whole pill instead of snapping.
+
+        One progress value drives both the outline and the content: on unfold the
+        pill opens first and the content fades in over its second half; on fold
+        the content fades out first and the pill closes behind it.
+        """
         if self.island_anim is not None:
             self.island_anim.stop()
             self.island_anim = None
@@ -578,31 +592,46 @@ class Pill(QWidget):
             self.setMaximumSize(MAX_WIDGET_SIZE, MAX_WIDGET_SIZE)
             end = self.expanded_rect()
             duration = ISLAND_EXPAND_MS
-            curve = QEasingCurve.OutCubic
+            curve = QEasingCurve(QEasingCurve.OutQuint)
         else:
             end = self.collapse_rect()
             duration = ISLAND_HIDE_MS
-            curve = QEasingCurve.InCubic
+            curve = QEasingCurve(QEasingCurve.InOutCubic)
         if start == end:
             self.finish_island_anim()
             return
+        # Resuming mid-way: content opacity starts where it currently is.
+        base = self.content_effect.opacity() if self.content_effect.isEnabled() else 1.0
+        if not opened and base >= 1.0:
+            base = 1.0
 
-        anim = QPropertyAnimation(self, b"geometry", self)
+        def lerp(a, b, t):
+            return round(a + (b - a) * t)
+
+        def step(raw):
+            eased = curve.valueForProgress(raw)
+            self.setGeometry(QRect(lerp(start.x(), end.x(), eased),
+                                   lerp(start.y(), end.y(), eased),
+                                   lerp(start.width(), end.width(), eased),
+                                   lerp(start.height(), end.height(), eased)))
+            self.center_content()
+            if opened:
+                fade = (raw - 0.30) / 0.70
+                self.set_content_opacity(max(base, fade * fade * (3 - 2 * fade))
+                                         if fade > 0 else base)
+            else:
+                fade = 1.0 - min(1.0, raw / 0.55)
+                self.set_content_opacity(min(base, fade * fade * (3 - 2 * fade)))
+
+        anim = QVariantAnimation(self)
         anim.setDuration(duration)
-        anim.setEasingCurve(curve)
-        anim.setStartValue(start)
-        anim.setEndValue(end)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.valueChanged.connect(step)
         anim.finished.connect(self.finish_island_anim)
         self.island_anim = anim
-
         if opened:
-            fade = QPropertyAnimation(self, b"windowOpacity", self)
-            fade.setDuration(duration)
-            fade.setEasingCurve(QEasingCurve.OutCubic)
-            fade.setStartValue(0.35)
-            fade.setEndValue(1.0)
-            self.fade_anim = fade
-            fade.start()
+            self.set_content_opacity(base if base < 1.0 else 0.0)
         anim.start()
 
     def finish_island_anim(self):
