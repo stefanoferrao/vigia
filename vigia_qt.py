@@ -12,7 +12,8 @@ import sys
 import threading
 import time
 
-from PySide6.QtCore import (QByteArray, QCoreApplication, QEvent, QObject, QPoint, Qt,
+from PySide6.QtCore import (QAbstractAnimation, QByteArray, QCoreApplication, QEasingCurve,
+                            QEvent, QObject, QPoint, QPropertyAnimation, QRect, Qt,
                             QTimer, Signal)
 from PySide6.QtGui import (
     QAction, QActionGroup, QColor, QCursor, QFont, QFontMetrics, QGuiApplication,
@@ -21,19 +22,24 @@ from PySide6.QtGui import (
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QApplication, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
-                               QMenu, QWidget)
+                               QMenu, QSizePolicy, QSpacerItem, QWidget)
 
 import vigia_core as core
 
 SIZES = {
-    "small": {"font": 9, "icon": 10, "pad_v": 3, "pad_h": 7, "gap": 6},
-    "medium": {"font": 10, "icon": 12, "pad_v": 4, "pad_h": 9, "gap": 8},
-    "large": {"font": 13, "icon": 15, "pad_v": 6, "pad_h": 12, "gap": 10},
+    "small": {"font": 9, "icon": 10, "pad_v": 3, "pad_h": 7,
+              "gap": 5, "gap_block": 14, "gap_group": 24},
+    "medium": {"font": 10, "icon": 12, "pad_v": 4, "pad_h": 9,
+               "gap": 6, "gap_block": 16, "gap_group": 28},
+    "large": {"font": 13, "icon": 15, "pad_v": 6, "pad_h": 12,
+              "gap": 9, "gap_block": 20, "gap_group": 34},
 }
 SERVER_NAME = "vigia"
 ISLAND_WIDTH = 120     # collapsed bar: a Dynamic-Island style handle at the top edge
 ISLAND_HEIGHT = 8
 ISLAND_COLLAPSE_MS = 400
+ISLAND_EXPAND_MS = 200  # unfold: slow down as the pill settles
+ISLAND_HIDE_MS = 160    # fold back: speed up into the bar
 MAX_WIDGET_SIZE = 16777215
 MENU_QSS = """
 QMenu {
@@ -336,12 +342,16 @@ class Pill(QWidget):
         self.setMouseTracking(True)
 
         self.css = SIZES[app.config.get("size")]
-        self.box = QHBoxLayout(self)
+        # The content lives on its own fixed-size widget: resizing the window while
+        # the island unfolds then clips it instead of reflowing the labels.
+        self.content = QWidget(self)
+        self.box = QHBoxLayout(self.content)
         self.box.setContentsMargins(self.css["pad_h"], self.css["pad_v"],
                                     max(2, self.css["pad_h"] - 2), self.css["pad_v"])
         self.box.setSpacing(self.css["gap"])
+        self.island_anim = None
+        self.fade_anim = None
         self.build()
-        self.adjustSize()
         self.hover_timer = QTimer(self)
         self.hover_timer.timeout.connect(self.poll_hover)
         self.hover_timer.start(120)
@@ -366,7 +376,9 @@ class Pill(QWidget):
         font.setPixelSize(self.css["font"])
         font.setBold(True)
         label.setFont(font)
-        label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        # Left-aligned inside a fixed "100%" slot: the icon -> number gap stays
+        # constant whatever the number is, and the block gap stays visibly bigger.
+        label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         metrics = QFontMetrics(font)
         label.setFixedWidth(metrics.horizontalAdvance("100%") + 2)
         label.setStyleSheet(f"color: {tint};")
@@ -390,6 +402,20 @@ class Pill(QWidget):
         line.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         return line
 
+    # -- rhythm --------------------------------------------------------------
+    def add_gap(self, width):
+        if width > 0:
+            self.box.addSpacerItem(QSpacerItem(int(width), 0, QSizePolicy.Fixed,
+                                               QSizePolicy.Minimum))
+
+    def block_gap(self):
+        """Extra space between two items (one provider, or one system reading)."""
+        return max(0, self.css["gap_block"] - self.css["gap"])
+
+    def group_gap(self):
+        """Half of the AI <-> system gap; the divider sits in the middle."""
+        return max(2, self.css["gap_group"] // 2 - self.css["gap"])
+
     def build(self):
         self.clear()
         style = self.app.config.get("icon_style")
@@ -400,7 +426,9 @@ class Pill(QWidget):
                 if row["id"].lower() not in hidden_providers][: self.app.config.get("max_providers")]
         if not rows:
             self.box.addWidget(self.muted_label("—"))
-        for row in rows:
+        for index, row in enumerate(rows):
+            if index:
+                self.add_gap(self.block_gap())
             tint = core.icon_tint(row["brand"], style)
             if not row["brand"] or not core.icon_path(row["brand"]):
                 initials = QLabel(row["name"][:2].upper())
@@ -428,10 +456,16 @@ class Pill(QWidget):
 
         if self.app.config.get("show_system"):
             hidden_system = self.app.hidden_items("hide_system")
+            self.add_gap(self.group_gap())
             self.box.addWidget(self.divider())
+            self.add_gap(self.group_gap())
+            counted = 0
             for name, reading in self.app.metrics.snapshot():
                 if reading is None or name.lower() in hidden_system:
                     continue
+                if counted:
+                    self.add_gap(self.block_gap())
+                counted += 1
                 self.box.addWidget(self.muted_label(name))
                 value = self.value_label(f"{reading}%", core.value_tint(
                     style, reading, self.app.config.get("alert_warn"),
@@ -439,6 +473,7 @@ class Pill(QWidget):
                 self.box.addWidget(value)
                 self.system_labels[name] = value
 
+        self.add_gap(self.block_gap())
         self.gear = GearLabel(self.show_menu)
         self.gear.setPixmap(gear_pixmap(max(9, self.css["icon"] - 2), dpr))
         self.gear.setFixedSize(max(9, self.css["icon"] - 2), max(9, self.css["icon"] - 2))
@@ -468,26 +503,126 @@ class Pill(QWidget):
     def island_on(self):
         return bool(self.app.config.get("island"))
 
-    def apply_island_state(self):
-        """Collapsed: a small bar with the content hidden. Open: the whole pill."""
-        opened = self.island_open or not self.island_on()
+    def collapse_rect(self):
+        area = self.screen.availableGeometry()
+        rect = QRect(area.x(), area.y(), ISLAND_WIDTH, ISLAND_HEIGHT)
+        rect.moveLeft(core.island_x((area.x(), area.y(), area.width(), area.height()),
+                                    ISLAND_WIDTH, self.app.island_offset(self)))
+        return rect
+
+    def expanded_rect(self, size=None):
+        area = self.screen.availableGeometry()
+        size = size or self.natural_size()
+        rect = QRect(0, 0, size.width(), size.height())
+        rect.moveLeft(core.island_x((area.x(), area.y(), area.width(), area.height()),
+                                    size.width(), self.app.island_offset(self)))
+        rect.moveTop(area.y())
+        return rect
+
+    def natural_size(self):
+        """Size the content wants; the layout runs on the container's own size."""
+        self.box.activate()
+        return self.box.sizeHint()
+
+    def fit_content(self):
+        """Pin the container to its natural size so the window can clip it."""
+        size = self.natural_size()
+        if self.content.size() != size:
+            self.content.setFixedSize(size)
+        self.center_content()
+        return size
+
+    def center_content(self):
+        self.content.move((self.width() - self.content.width()) // 2,
+                          (self.height() - self.content.height()) // 2)
+
+    def show_children(self, visible):
         for index in range(self.box.count()):
             widget = self.box.itemAt(index).widget()
             if widget is not None:
-                widget.setVisible(opened)
+                widget.setVisible(visible)
+
+    def apply_island_state(self):
+        """Collapsed: a small bar with the content hidden. Open: the whole pill."""
+        opened = self.island_open or not self.island_on()
+        self.show_children(opened)
+        if self.island_busy() and self.island_open:
+            self.fit_content()  # a rebuild landed mid-animation; let it finish
+            return
         if opened:
+            size = self.fit_content()
             self.setMinimumSize(0, 0)
             self.setMaximumSize(MAX_WIDGET_SIZE, MAX_WIDGET_SIZE)
-            self.adjustSize()
+            if self.size() != size:
+                self.resize(size)
+            self.center_content()
         else:
             self.setFixedSize(ISLAND_WIDTH, ISLAND_HEIGHT)
+            self.center_content()
+        self.setWindowOpacity(1.0)
+
+    def island_busy(self):
+        return (self.island_anim is not None
+                and self.island_anim.state() == QAbstractAnimation.Running)
+
+    def animate_island(self, opened):
+        """Morph between the 8 px bar and the whole pill instead of snapping."""
+        if self.island_anim is not None:
+            self.island_anim.stop()
+            self.island_anim = None
+        start = self.geometry()
+        if opened:
+            self.show_children(True)
+            self.fit_content()
+            self.setMinimumSize(0, 0)
+            self.setMaximumSize(MAX_WIDGET_SIZE, MAX_WIDGET_SIZE)
+            end = self.expanded_rect()
+            duration = ISLAND_EXPAND_MS
+            curve = QEasingCurve.OutCubic
+        else:
+            end = self.collapse_rect()
+            duration = ISLAND_HIDE_MS
+            curve = QEasingCurve.InCubic
+        if start == end:
+            self.finish_island_anim()
+            return
+
+        anim = QPropertyAnimation(self, b"geometry", self)
+        anim.setDuration(duration)
+        anim.setEasingCurve(curve)
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+        anim.finished.connect(self.finish_island_anim)
+        self.island_anim = anim
+
+        if opened:
+            fade = QPropertyAnimation(self, b"windowOpacity", self)
+            fade.setDuration(duration)
+            fade.setEasingCurve(QEasingCurve.OutCubic)
+            fade.setStartValue(0.35)
+            fade.setEndValue(1.0)
+            self.fade_anim = fade
+            fade.start()
+        anim.start()
+
+    def finish_island_anim(self):
+        self.island_anim = None
+        if self.island_on():
+            self.apply_island_state()
+            if self.island_open:
+                self.place()
+            else:
+                self.move(self.collapse_rect().topLeft())
 
     def set_island_open(self, opened):
         if opened == self.island_open:
             return
         self.island_open = opened
-        self.apply_island_state()
-        self.place()
+        if self.island_on():
+            self.animate_island(opened)
+        else:
+            self.apply_island_state()
+            self.place()
 
     def sync_island(self):
         """Keep open/closed state and the real window size in agreement."""
@@ -497,11 +632,11 @@ class Pill(QWidget):
         if wanted:
             self.collapse_timer.stop()
             if not self.island_open:
-                self.island_open = True
-                self.apply_island_state()
-                self.place()
+                self.set_island_open(True)
         elif self.island_open and not self.collapse_timer.isActive():
             self.collapse_timer.start(ISLAND_COLLAPSE_MS)
+        if self.island_busy():
+            return
         collapsed = (self.width(), self.height()) == (ISLAND_WIDTH, ISLAND_HEIGHT)
         if collapsed == self.island_open:  # state drifted from the window size
             self.apply_island_state()
@@ -575,13 +710,20 @@ class Pill(QWidget):
         return self.screen.name() or str(self.screen_index)
 
     def place(self, force=False):
+        if self.island_busy():
+            return
         area = self.screen.availableGeometry()
         box = (area.x(), area.y(), area.width(), area.height())
         if self.island_on():
-            offset = 0 if force else self.app.island_offset(self)
-            x = core.island_x(box, self.width(), offset)
-            if self.pos() != QPoint(x, area.y()):
-                self.move(x, area.y())
+            if self.island_open:
+                target = self.expanded_rect()
+            else:
+                target = self.collapse_rect()
+                if force:
+                    target = QRect(area.x(), area.y(), ISLAND_WIDTH, ISLAND_HEIGHT)
+                    target.moveLeft(core.island_x(box, ISLAND_WIDTH, 0))
+            if self.pos() != target.topLeft():
+                self.move(target.topLeft())
             return
         stored = None if force else self.app.config.positions.get(self.key())
         if stored:
@@ -598,9 +740,10 @@ class Pill(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.center_content()
         # adjustSize() finishes after the layout runs, so re-anchor here with the
         # real width instead of the previous one.
-        if self.drag_offset is None:
+        if self.drag_offset is None and not self.island_busy():
             QTimer.singleShot(0, self.place)
 
     def rebuild(self):
@@ -609,14 +752,10 @@ class Pill(QWidget):
                                     max(2, self.css["pad_h"] - 2), self.css["pad_v"])
         self.box.setSpacing(self.css["gap"])
         self.build()
-        self.adjustSize()
-        self.place()
 
     def set_rows(self, rows):
         self.rows = rows
         self.build()
-        self.adjustSize()
-        self.place()
 
     def update_system(self):
         if not self.system_labels:
@@ -1042,7 +1181,10 @@ class VigIA(QObject):
             self.island_pinned = False
         for window in self.windows:
             window.collapse_timer.stop()
-            window.island_open = bool(enabled)
+            if window.island_anim is not None:
+                window.island_anim.stop()
+                window.island_anim = None
+            window.island_open = False
             window.apply_island_state()
             window.place()
 

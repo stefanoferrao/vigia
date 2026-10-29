@@ -18,6 +18,15 @@ except Exception as error:  # pragma: no cover - environment without PySide6
 
 
 @unittest.skipUnless(HAVE_QT, "PySide6 indisponível")
+class RhythmTests(unittest.TestCase):
+    def test_gaps_grow_with_the_level(self):
+        for size, css in vigia_qt.SIZES.items():
+            with self.subTest(size=size):
+                self.assertGreater(css["gap_block"], css["gap"])
+                self.assertGreater(css["gap_group"], css["gap_block"])
+
+
+@unittest.skipUnless(HAVE_QT, "PySide6 indisponível")
 class AcceleratorTests(unittest.TestCase):
     def test_pretty_accelerator(self):
         self.assertEqual(vigia_qt.pretty_accelerator("<Control><Alt>u"), "Ctrl+Alt+U")

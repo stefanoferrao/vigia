@@ -75,8 +75,10 @@ Ao abrir, a pílula aparece no canto superior direito do monitor principal.
   No topo do menu ficam o nome e o atalho em uso (`VigIA · Atalho: Ctrl+Alt+V`).
 - **Modo ilha** (menu → *Encaixar no topo (ilha)*) deixa só uma faixa de 120×8 px no
   alto, centralizada; passar o mouse abre a pílula inteira, sair do mouse recolhe em
-  0,4 s, e um **clique fixa aberta** (outro clique libera). Arrastar na horizontal
-  move a faixa e a posição fica salva por monitor.
+  0,4 s, e um **clique fixa aberta** (outro clique libera). A faixa se desdobra em
+  200 ms (e recolhe em 160 ms) crescendo a partir do centro, sem trocar de tamanho de
+  um quadro para o outro. Arrastar na horizontal move a faixa e a posição fica salva
+  por monitor.
 - **Atalho padrão `Ctrl+Alt+V`** mostra/esconde (e inicia, se não estiver rodando).
 - **Sair de verdade** é pelo menu → *Sair*.
 
