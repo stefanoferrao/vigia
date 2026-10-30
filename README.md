@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/stefanoferrao/vigia/actions/workflows/ci.yml/badge.svg)](https://github.com/stefanoferrao/vigia/actions/workflows/ci.yml)
 
+🌐 **Português** · [English](README.en.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+
 > O uso dos seus agentes de IA de relance — uma pílula flutuante para Linux e Windows.
 
 ![Prévia do VigIA](docs/preview.png)
