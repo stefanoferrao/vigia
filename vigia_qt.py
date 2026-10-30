@@ -17,12 +17,12 @@ from PySide6.QtCore import (QAbstractAnimation, QByteArray, QCoreApplication, QE
                             QTimer, QVariantAnimation, Signal)
 from PySide6.QtGui import (
     QAction, QActionGroup, QColor, QCursor, QFont, QFontMetrics, QGuiApplication,
-    QIcon, QPainter, QPainterPath, QPen, QPixmap,
+    QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
 )
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QApplication, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
-                               QColorDialog, QMenu, QSizePolicy, QSpacerItem, QWidget)
+                               QMenu, QSizePolicy, QSpacerItem, QWidget, QWidgetAction)
 
 import vigia_core as core
 
@@ -265,6 +265,151 @@ class Hotkey(QObject):
 
 
 # ----------------------------------------------------------------------------- pill
+
+class AccentPicker(QWidget):
+    """Colour picker that lives inside the menu: saturation/value square, hue bar, swatches.
+
+    Dragging previews the colour on the pills; releasing (or a swatch) commits it, so the
+    menu never closes and the pill stays open behind it."""
+    previewed = Signal(str)
+    committed = Signal(str)
+    SWATCHES = ("#8b93ff", "#4cc38a", "#f2bd34", "#ff6b68", "#d97757", "#4285f4",
+                "#c084fc", "#e6e6ec")
+    PAD, BOX_W, BOX_H, BAR_H, DOT = 10, 200, 110, 12, 18
+
+    def __init__(self, color, parent=None):
+        super().__init__(parent)
+        self.hue, self.sat, self.val, _ = QColor(color).getHsvF()
+        self.hue = max(0.0, self.hue)  # greys report hue -1
+        self.drag = None              # "box" | "bar" while the mouse is down
+        self.setFixedSize(self.BOX_W + 2 * self.PAD, 2 * self.PAD + self.BOX_H + 8
+                          + self.BAR_H + 10 + self.DOT + 8 + 14)
+        self.setCursor(Qt.CrossCursor)
+        self.setMouseTracking(False)
+
+    # -- geometry ------------------------------------------------------------
+    def box_rect(self):
+        return QRect(self.PAD, self.PAD, self.BOX_W, self.BOX_H)
+
+    def bar_rect(self):
+        return QRect(self.PAD, self.PAD + self.BOX_H + 8, self.BOX_W, self.BAR_H)
+
+    def swatch_rect(self, index):
+        step = (self.BOX_W - self.DOT) / (len(self.SWATCHES) - 1)
+        y = self.bar_rect().bottom() + 10
+        return QRect(int(self.PAD + index * step), y, self.DOT, self.DOT)
+
+    def color(self):
+        return QColor.fromHsvF(self.hue, self.sat, self.val)
+
+    def set_color(self, color):
+        """Follow a colour changed from outside (e.g. the reset entry)."""
+        self.hue, self.sat, self.val, _ = QColor(color).getHsvF()
+        self.hue = max(0.0, self.hue)
+        self.update()
+
+    # -- paint ---------------------------------------------------------------
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        border = QColor(core.THEME["menu-border"])
+        text = QColor(core.THEME["text-secondary"])
+
+        box = self.box_rect()
+        clip = QPainterPath()
+        clip.addRoundedRect(box, 6, 6)
+        painter.save()
+        painter.setClipPath(clip)
+        painter.fillRect(box, QColor.fromHsvF(self.hue, 1.0, 1.0))
+        across = QLinearGradient(box.left(), 0, box.right(), 0)
+        across.setColorAt(0, QColor(255, 255, 255))
+        across.setColorAt(1, QColor(255, 255, 255, 0))
+        painter.fillRect(box, across)
+        down = QLinearGradient(0, box.top(), 0, box.bottom())
+        down.setColorAt(0, QColor(0, 0, 0, 0))
+        down.setColorAt(1, QColor(0, 0, 0))
+        painter.fillRect(box, down)
+        painter.restore()
+        painter.setPen(QPen(border, 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(box, 6, 6)
+        self.handle(painter, box.left() + self.sat * box.width(),
+                    box.top() + (1 - self.val) * box.height(), self.color())
+
+        bar = self.bar_rect()
+        rainbow = QLinearGradient(bar.left(), 0, bar.right(), 0)
+        for step in range(7):
+            rainbow.setColorAt(step / 6, QColor.fromHsvF(step / 6 if step < 6 else 0.0, 1, 1))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(rainbow)
+        painter.drawRoundedRect(bar, bar.height() / 2, bar.height() / 2)
+        self.handle(painter, bar.left() + self.hue * bar.width(), bar.center().y() + 0.5,
+                    QColor.fromHsvF(self.hue, 1, 1))
+
+        for index, hex_color in enumerate(self.SWATCHES):
+            rect = self.swatch_rect(index)
+            painter.setPen(QPen(border, 1))
+            painter.setBrush(QColor(hex_color))
+            painter.drawEllipse(rect.adjusted(1, 1, -1, -1))
+            if QColor(hex_color).name() == self.color().name():
+                painter.setPen(QPen(QColor(core.THEME["text-primary"]), 2))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(rect.adjusted(-1, -1, 1, 1))
+
+        painter.setPen(text)
+        font = QFont(self.font())
+        font.setPixelSize(11)
+        painter.setFont(font)
+        painter.drawText(QRect(self.PAD, self.height() - 22, self.BOX_W, 14),
+                         Qt.AlignLeft | Qt.AlignVCenter, self.color().name().upper())
+        painter.end()
+
+    def handle(self, painter, x, y, fill):
+        painter.setBrush(fill)
+        painter.setPen(QPen(QColor(0, 0, 0, 120), 3))
+        painter.drawEllipse(QPoint(int(x), int(y)), 6, 6)
+        painter.setPen(QPen(QColor(255, 255, 255), 2))
+        painter.drawEllipse(QPoint(int(x), int(y)), 6, 6)
+
+    # -- input ---------------------------------------------------------------
+    def mousePressEvent(self, event):
+        point = event.position().toPoint()
+        for index, hex_color in enumerate(self.SWATCHES):
+            if self.swatch_rect(index).contains(point):
+                self.hue, self.sat, self.val, _ = QColor(hex_color).getHsvF()
+                self.hue = max(0.0, self.hue)
+                self.update()
+                self.committed.emit(self.color().name())
+                return
+        if self.bar_rect().adjusted(0, -6, 0, 6).contains(point):
+            self.drag = "bar"
+        elif self.box_rect().contains(point):
+            self.drag = "box"
+        else:
+            return
+        self.track(point)
+
+    def mouseMoveEvent(self, event):
+        if self.drag:
+            self.track(event.position().toPoint())
+
+    def mouseReleaseEvent(self, event):
+        if self.drag:
+            self.track(event.position().toPoint())
+            self.drag = None
+            self.committed.emit(self.color().name())
+
+    def track(self, point):
+        if self.drag == "box":
+            box = self.box_rect()
+            self.sat = min(1.0, max(0.0, (point.x() - box.left()) / box.width()))
+            self.val = 1.0 - min(1.0, max(0.0, (point.y() - box.top()) / box.height()))
+        else:
+            bar = self.bar_rect()
+            self.hue = min(0.999, max(0.0, (point.x() - bar.left()) / bar.width()))
+        self.update()
+        self.previewed.emit(self.color().name())
+
 
 class StickyMenu(QMenu):
     """Keeps the popup open after a setting changes.
@@ -1305,12 +1450,18 @@ class VigIA(QObject):
             group.addAction(action)
             theme_menu.addAction(action)
         theme_menu.addSeparator()
-        pick = theme_menu.addAction(self.config.t("accent_pick"))
-        pick.setProperty("closes_menu", True)
-        pick.triggered.connect(lambda: QTimer.singleShot(0, self.pick_accent))
-        if self.config.get("accent"):
-            reset = theme_menu.addAction(self.config.t("accent_reset"))
-            reset.triggered.connect(lambda: self.set_accent(""))
+        accent_menu = self.submenu(theme_menu, self.config.t("accent_pick").rstrip("…").strip())
+        picker = AccentPicker(core.THEME["primary"])
+        picker.previewed.connect(lambda color: self.apply_theme(color))
+        picker.committed.connect(self.set_accent)
+        holder = QWidgetAction(accent_menu)
+        holder.setDefaultWidget(picker)
+        accent_menu.addAction(holder)
+        accent_menu.addSeparator()
+        reset = accent_menu.addAction(self.config.t("accent_reset"))
+        reset.triggered.connect(lambda: (
+            self.set_accent(""),
+            QTimer.singleShot(THEME_MS + 40, lambda: picker.set_color(core.THEME["primary"]))))
 
         icons_menu = self.submenu(menu, self.config.t("menu_icons"))
         group = QActionGroup(icons_menu)
@@ -1542,51 +1693,6 @@ class VigIA(QObject):
         self.config.set("accent", value)
         self.apply_theme()
 
-    def pick_accent(self):
-        """Live accent picker: the pills open whatever their state, preview each colour as
-        it is dragged, and return to how they were once the dialog closes."""
-        dialog = getattr(self, "accent_dialog", None)
-        if dialog is not None and dialog.isVisible():
-            dialog.raise_()
-            return
-        was_hidden = self.hidden
-        if was_hidden:
-            self.show_all()
-        self.previewing = True
-        for window in self.windows:
-            window.sync_island()
-
-        dialog = QColorDialog(QColor(core.THEME["primary"]))
-        dialog.setWindowTitle(self.config.t("accent_pick"))
-        dialog.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-        dialog.currentColorChanged.connect(lambda color: self.apply_theme(color.name()))
-
-        def finished(result):
-            self.previewing = False
-            if result:
-                self.set_accent(dialog.currentColor().name())
-            else:
-                self.apply_theme()  # back to the saved accent
-            if was_hidden:
-                self.hide_all()
-            for window in self.windows:
-                window.sync_island()  # an island folds back by itself once nothing holds it
-            self.accent_dialog = None
-            dialog.deleteLater()
-
-        dialog.finished.connect(finished)
-        self.accent_dialog = dialog
-        dialog.show()
-        self.keep_clear_of_pills(dialog)
-
-    def keep_clear_of_pills(self, dialog):
-        """Slide the dialog off any pill so the colour is judged on the real thing."""
-        for window in self.windows:
-            frame = dialog.frameGeometry()
-            if frame.intersects(window.geometry().adjusted(-12, -12, 12, 12)):
-                frame.moveTop(window.geometry().bottom() + 24)
-                dialog.move(frame.topLeft())
-
     def set_bars(self, enabled):
         self.config.set("bars", enabled)
         for window in self.windows:
@@ -1674,9 +1780,8 @@ class VigIA(QObject):
         return pretty_accelerator(getattr(self.hotkey, "accelerator", ""))
 
     def menu_open(self):
-        """True while the menu or the accent picker holds the pills open."""
         menu = getattr(self, "menu", None)
-        return (menu is not None and menu.isVisible()) or getattr(self, "previewing", False)
+        return menu is not None and menu.isVisible()
 
     def set_always_on_top(self, enabled):
         self.config.set("always_on_top", enabled)
