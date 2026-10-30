@@ -41,6 +41,7 @@ ISLAND_COLLAPSE_MS = 400
 ISLAND_EXPAND_MS = 340  # unfold: fast start, long soft landing
 ISLAND_HIDE_MS = 240    # fold back: content leaves first, then the pill closes
 MAX_WIDGET_SIZE = 16777215
+THEME_MS = 280          # colour cross-fade when the theme changes
 FADE_MS = 220           # colour cross-fade when a reading changes state
 HOVER_MS = 140          # border warms up to the accent under the cursor
 PULSE_MS = 2000         # one breath of a critical reading
@@ -409,6 +410,16 @@ class Reading(QWidget):
         self.anim = anim
         anim.start()
 
+    def follow_theme(self, colors):
+        """Jump to the colours of the theme being cross-faded (the pill drives the fade)."""
+        tint, bar, self.critical = colors
+        self.tint, self.bar = QColor(tint), QColor(bar)
+        self.target = (QColor(self.tint), QColor(self.bar))
+        self.pill.tint_memory[self.key] = self.target
+        if self.anim is not None:
+            self.anim.stop()
+        self.update()
+
     def fade(self, start, t):
         self.tint = mix(start[0], self.target[0], t)
         self.bar = mix(start[1], self.target[1], t)
@@ -494,6 +505,7 @@ class Pill(QWidget):
         self.drag_origin = QPoint(0, 0)
         self.drag_started = False
         self.readings = []
+        self.themed = []          # restyle callables for widgets that carry theme colours
         self.system_labels = {}
         self.tint_memory = {}     # last colours per reading key, for cross-fades across rebuilds
         self.pulse_value = 0.0
@@ -542,7 +554,17 @@ class Pill(QWidget):
                 widget.hide()  # gone this frame, not at the next event-loop turn
                 widget.deleteLater()
         self.readings = []
+        self.themed = []
         self.system_labels = {}
+
+    def restyle(self):
+        """Repaint with core.THEME as it is right now (called every frame of a theme fade)."""
+        for apply in self.themed:
+            apply()
+        for reading in self.readings:
+            reading.follow_theme(self.reading_colors(reading.percent))
+        self.update()
+        self.shadow.update()
 
     def reading_colors(self, percent):
         config = self.app.config
@@ -562,14 +584,16 @@ class Pill(QWidget):
         font = QFont(label.font())
         font.setPixelSize(self.css["font"])
         label.setFont(font)
-        label.setStyleSheet(f"color: {core.THEME['text-secondary']};")
+        self.themed.append(lambda: label.setStyleSheet(f"color: {core.THEME['text-secondary']};"))
+        self.themed[-1]()
         label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         return label
 
     def divider(self):
         line = QWidget()
         line.setFixedSize(1, max(6, self.css["icon"] - 2))
-        line.setStyleSheet(f"background: {core.THEME['divider']};")
+        self.themed.append(lambda: line.setStyleSheet(f"background: {core.THEME['divider']};"))
+        self.themed[-1]()
         line.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         return line
 
@@ -600,22 +624,25 @@ class Pill(QWidget):
         for index, row in enumerate(rows):
             if index:
                 self.add_gap(self.block_gap())
-            tint = core.icon_tint(row["brand"], style)
             if not row["brand"] or not core.icon_path(row["brand"]):
                 initials = QLabel(row["name"][:2].upper())
                 font = QFont(initials.font())
                 font.setPixelSize(self.css["font"])
                 font.setBold(True)
                 initials.setFont(font)
-                initials.setStyleSheet(f"color: {core.THEME['text-secondary']};")
+                self.themed.append(lambda w=initials: w.setStyleSheet(
+                    f"color: {core.THEME['text-secondary']};"))
+                self.themed[-1]()
                 initials.setFixedWidth(self.css["icon"] + 2)
                 initials.setAlignment(Qt.AlignCenter)
                 initials.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                 self.box.addWidget(initials)
             else:
-                pixmap = provider_pixmap(row["brand"], tint, self.css["icon"], dpr)
                 icon = QLabel()
-                icon.setPixmap(pixmap)
+                self.themed.append(lambda w=icon, b=row["brand"]: w.setPixmap(provider_pixmap(
+                    b, core.icon_tint(b, self.app.config.get("icon_style")),
+                    self.css["icon"], dpr)))
+                self.themed[-1]()
                 icon.setFixedSize(self.css["icon"], self.css["icon"])
                 icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                 self.box.addWidget(icon)
@@ -1440,6 +1467,9 @@ class VigIA(QObject):
         hide.setProperty("closes_menu", True)
         quit_action = menu.addAction(self.config.t("quit"), self.quit)
         quit_action.setProperty("closes_menu", True)
+        menu.addSeparator()
+        version = menu.addAction(f"{core.APP_NAME} v{core.VERSION}")
+        version.setEnabled(False)
 
         if open_key:  # re-opened after a language change: unfold the same submenu again
             target = next((action for action in menu.actions()
@@ -1466,11 +1496,45 @@ class VigIA(QObject):
         return scheme is None or scheme() != Qt.ColorScheme.Light
 
     def apply_theme(self):
+        """Cross-fade to the configured theme: pills and any open menu follow every frame."""
+        old = dict(core.THEME)
         core.set_theme(self.config.get("theme"), self.system_is_dark(),
                        self.config.get("accent"))
+        new = dict(core.THEME)
+        anim = getattr(self, "theme_anim", None)
+        if anim is not None:
+            anim.stop()
+        if old == new:
+            return
+        # Only plain #rrggbb values blend; anything else (alpha forms) lands with the theme.
+        plain = [k for k in new if k in old and len(new[k]) == 7 and len(old[k]) == 7]
+        start = {k: QColor(old[k]) for k in plain}
+        end = {k: QColor(new[k]) for k in plain}
+
+        def frame(t):
+            for key, color in end.items():
+                core.THEME[key] = mix(start[key], color, t).name()
+            self.restyle_all()
+            if t >= 1.0:
+                core.THEME.update(new)  # land exactly on the theme's own values
+                self.restyle_all()
+
+        self.theme_anim = anim = QVariantAnimation(self)
+        anim.setDuration(THEME_MS)
+        anim.setEasingCurve(QEasingCurve.InOutCubic)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.valueChanged.connect(frame)
+        anim.start()
+
+    def restyle_all(self):
         for window in self.windows:
-            window.rebuild()
-            window.update()
+            window.restyle()
+        menu = getattr(self, "menu", None)
+        if menu is not None and menu.isVisible():
+            qss = menu_qss()
+            for each in [menu] + menu.findChildren(QMenu):
+                each.setStyleSheet(qss)
 
     def set_accent(self, value):
         self.config.set("accent", value)
