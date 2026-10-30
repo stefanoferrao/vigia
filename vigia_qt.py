@@ -1495,11 +1495,13 @@ class VigIA(QObject):
         scheme = getattr(hints, "colorScheme", None)
         return scheme is None or scheme() != Qt.ColorScheme.Light
 
-    def apply_theme(self):
-        """Cross-fade to the configured theme: pills and any open menu follow every frame."""
+    def apply_theme(self, accent=None):
+        """Cross-fade to the configured theme: pills and any open menu follow every frame.
+
+        `accent` previews a colour that is not saved (the accent picker)."""
         old = dict(core.THEME)
         core.set_theme(self.config.get("theme"), self.system_is_dark(),
-                       self.config.get("accent"))
+                       self.config.get("accent") if accent is None else accent)
         new = dict(core.THEME)
         anim = getattr(self, "theme_anim", None)
         if anim is not None:
@@ -1541,10 +1543,49 @@ class VigIA(QObject):
         self.apply_theme()
 
     def pick_accent(self):
-        color = QColorDialog.getColor(QColor(core.THEME["primary"]), None,
-                                      self.config.t("accent_pick"))
-        if color.isValid():
-            self.set_accent(color.name())
+        """Live accent picker: the pills open whatever their state, preview each colour as
+        it is dragged, and return to how they were once the dialog closes."""
+        dialog = getattr(self, "accent_dialog", None)
+        if dialog is not None and dialog.isVisible():
+            dialog.raise_()
+            return
+        was_hidden = self.hidden
+        if was_hidden:
+            self.show_all()
+        self.previewing = True
+        for window in self.windows:
+            window.sync_island()
+
+        dialog = QColorDialog(QColor(core.THEME["primary"]))
+        dialog.setWindowTitle(self.config.t("accent_pick"))
+        dialog.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        dialog.currentColorChanged.connect(lambda color: self.apply_theme(color.name()))
+
+        def finished(result):
+            self.previewing = False
+            if result:
+                self.set_accent(dialog.currentColor().name())
+            else:
+                self.apply_theme()  # back to the saved accent
+            if was_hidden:
+                self.hide_all()
+            for window in self.windows:
+                window.sync_island()  # an island folds back by itself once nothing holds it
+            self.accent_dialog = None
+            dialog.deleteLater()
+
+        dialog.finished.connect(finished)
+        self.accent_dialog = dialog
+        dialog.show()
+        self.keep_clear_of_pills(dialog)
+
+    def keep_clear_of_pills(self, dialog):
+        """Slide the dialog off any pill so the colour is judged on the real thing."""
+        for window in self.windows:
+            frame = dialog.frameGeometry()
+            if frame.intersects(window.geometry().adjusted(-12, -12, 12, 12)):
+                frame.moveTop(window.geometry().bottom() + 24)
+                dialog.move(frame.topLeft())
 
     def set_bars(self, enabled):
         self.config.set("bars", enabled)
@@ -1633,8 +1674,9 @@ class VigIA(QObject):
         return pretty_accelerator(getattr(self.hotkey, "accelerator", ""))
 
     def menu_open(self):
+        """True while the menu or the accent picker holds the pills open."""
         menu = getattr(self, "menu", None)
-        return menu is not None and menu.isVisible()
+        return (menu is not None and menu.isVisible()) or getattr(self, "previewing", False)
 
     def set_always_on_top(self, enabled):
         self.config.set("always_on_top", enabled)
