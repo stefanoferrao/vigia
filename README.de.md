@@ -31,6 +31,7 @@ möchtest, CPU, RAM und GPU in derselben Zeile.
   `Fable (7d)` bei Claude. Standard ist das am stärksten verbrauchte.
 - **Inselmodus**: Dock die Pille am oberen Rand wie eine *Dynamic Island* — nur ein schmaler
   Streifen ist sichtbar; er öffnet sich beim Darüberfahren mit der Maus (oder per Klick, der ihn offen fixiert).
+  Die Insel lässt sich frei ziehen und **rastet an der nächsten Kante ein** (oben, unten, links oder rechts). *Position der Insel* bietet 12 Andockplätze (Kante × Position entlang der Kante).
 - **Fünf Sprachen**: Portugiesisch, Englisch, Spanisch, Französisch und Deutsch (oder automatisch nach System).
 - **Globales Tastenkürzel** und optionaler Autostart.
 
@@ -39,7 +40,7 @@ möchtest, CPU, RAM und GPU in derselben Zeile.
 - **Python 3.11+** (nutzt `tomllib`).
 - **PySide6** (Qt 6) — das Installationsprogramm erstellt eine private Umgebung und lädt es herunter (~82 MB Download, ~245 MB auf der Platte).
 - Unter Linux: **libxcb-cursor0** (das Installationsprogramm versucht, es zu lösen; siehe *Probleme?*).
-- Das CLI **[ai-usagebar](https://github.com/akitaonrails/ai-usagebar)**, das die Kontingente der Anbieter ausliest. Es gibt Builds für Linux und Windows.
+- **[ai-usagebar](https://github.com/akitaonrails/ai-usagebar)**, das die Kontingente der Anbieter ausliest, ist **eingebaut**: Der Installer (oder der erste Start) lädt die offizielle Binärdatei, prüft ihre sha256 und legt sie in `~/.local/share/vigia/bin` ab (Windows: `%LOCALAPPDATA%\vigia\bin`). Aktualisieren über **Datenquelle aktualisieren** im Menü.
 
 ## Installation
 
@@ -104,6 +105,7 @@ anchor = "top-right"    # top-left | top-center | top-right
                         # middle-left | middle-center | middle-right
                         # bottom-left | bottom-center | bottom-right
 island = false          # true: dockt oben als schmaler Streifen an (Inselmodus)
+island_anchor = "top-center" # Kante-Position: top|bottom-left|center|right, left|right-top|middle|bottom
 always_on_top = true
 show_system = false     # CPU / RAM / GPU
 autostart = true

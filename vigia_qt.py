@@ -5,6 +5,7 @@ Everything platform-specific (paths, metrics, autostart) lives in vigia_core.
 """
 
 import ctypes
+import math
 import os
 import signal
 import subprocess
@@ -13,7 +14,7 @@ import threading
 import time
 
 from PySide6.QtCore import (QAbstractAnimation, QByteArray, QCoreApplication, QEasingCurve,
-                            QEvent, QObject, QPoint, QPropertyAnimation, QRect, Qt,
+                            QEvent, QObject, QPoint, QPointF, QPropertyAnimation, QRect, QRectF, QSize, Qt,
                             QTimer, QVariantAnimation, Signal)
 from PySide6.QtGui import (
     QAction, QActionGroup, QColor, QCursor, QFont, QFontMetrics, QGuiApplication,
@@ -21,7 +22,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import (QApplication, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QGraphicsOpacityEffect, QBoxLayout, QLabel,
                                QMenu, QSizePolicy, QSpacerItem, QWidget, QWidgetAction)
 
 import vigia_core as core
@@ -38,11 +39,15 @@ SERVER_NAME = "vigia"
 ISLAND_WIDTH = 120     # collapsed bar: a Dynamic-Island style handle at the top edge
 ISLAND_HEIGHT = 8
 ISLAND_COLLAPSE_MS = 400
-ISLAND_EXPAND_MS = 340  # unfold: fast start, long soft landing
+ISLAND_EXPAND_MS = 470  # unfold: fast start, springy landing
 ISLAND_HIDE_MS = 240    # fold back: content leaves first, then the pill closes
 MAX_WIDGET_SIZE = 16777215
 THEME_MS = 280          # colour cross-fade when the theme changes
 FADE_MS = 220           # colour cross-fade when a reading changes state
+GLIDE_MS = 420          # a number and its bar glide to a new reading
+SHOW_MS = 180           # pills fade in/out when shown or hidden
+MENU_MS = 300           # menus spring open
+WAVE_MS = 900           # a colour change sends a ring out from the pill
 HOVER_MS = 140          # border warms up to the accent under the cursor
 PULSE_MS = 2000         # one breath of a critical reading
 SHADOW_PAD = 12         # soft shadow around the pill: extent, and offset below
@@ -282,10 +287,39 @@ class AccentPicker(QWidget):
         self.hue, self.sat, self.val, _ = QColor(color).getHsvF()
         self.hue = max(0.0, self.hue)  # greys report hue -1
         self.drag = None              # "box" | "bar" while the mouse is down
+        self.grab = 0.0               # handles swell while held; eased toward grab_goal
+        self.grab_goal = 0.0
+        self.swell = [0.0] * len(self.SWATCHES)  # swatches grow under the cursor
+        self.swell_goal = [0.0] * len(self.SWATCHES)
+        self.ease = QTimer(self)
+        self.ease.setInterval(16)
+        self.ease.timeout.connect(self.settle)
         self.setFixedSize(self.BOX_W + 2 * self.PAD, 2 * self.PAD + self.BOX_H + 8
                           + self.BAR_H + 10 + self.DOT + 8 + 14)
         self.setCursor(Qt.CrossCursor)
-        self.setMouseTracking(False)
+        self.setMouseTracking(True)
+
+    def settle(self):
+        """Ease every swelling value toward its goal; stop the timer once all have landed."""
+        moving = False
+        self.grab += (self.grab_goal - self.grab) * 0.32
+        if abs(self.grab_goal - self.grab) > 0.004:
+            moving = True
+        else:
+            self.grab = self.grab_goal
+        for index, goal in enumerate(self.swell_goal):
+            self.swell[index] += (goal - self.swell[index]) * 0.30
+            if abs(goal - self.swell[index]) > 0.004:
+                moving = True
+            else:
+                self.swell[index] = goal
+        self.update()
+        if not moving:
+            self.ease.stop()
+
+    def aim(self):
+        if not self.ease.isActive():
+            self.ease.start()
 
     # -- geometry ------------------------------------------------------------
     def box_rect(self):
@@ -334,7 +368,8 @@ class AccentPicker(QWidget):
         painter.setBrush(Qt.NoBrush)
         painter.drawRoundedRect(box, 6, 6)
         self.handle(painter, box.left() + self.sat * box.width(),
-                    box.top() + (1 - self.val) * box.height(), self.color())
+                    box.top() + (1 - self.val) * box.height(), self.color(),
+                    6 + 5 * self.grab if self.drag == "box" or self.grab_goal == 0 else 6)
 
         bar = self.bar_rect()
         rainbow = QLinearGradient(bar.left(), 0, bar.right(), 0)
@@ -344,17 +379,21 @@ class AccentPicker(QWidget):
         painter.setBrush(rainbow)
         painter.drawRoundedRect(bar, bar.height() / 2, bar.height() / 2)
         self.handle(painter, bar.left() + self.hue * bar.width(), bar.center().y() + 0.5,
-                    QColor.fromHsvF(self.hue, 1, 1))
+                    QColor.fromHsvF(self.hue, 1, 1),
+                    6 + 4 * self.grab if self.drag == "bar" or self.grab_goal == 0 else 6)
 
         for index, hex_color in enumerate(self.SWATCHES):
             rect = self.swatch_rect(index)
+            swell = self.swell[index]
+            grown = rect.adjusted(1, 1, -1, -1)
+            grown = QRectF(grown).adjusted(-3.5 * swell, -3.5 * swell, 3.5 * swell, 3.5 * swell)
             painter.setPen(QPen(border, 1))
             painter.setBrush(QColor(hex_color))
-            painter.drawEllipse(rect.adjusted(1, 1, -1, -1))
+            painter.drawEllipse(grown)
             if QColor(hex_color).name() == self.color().name():
                 painter.setPen(QPen(QColor(core.THEME["text-primary"]), 2))
                 painter.setBrush(Qt.NoBrush)
-                painter.drawEllipse(rect.adjusted(-1, -1, 1, 1))
+                painter.drawEllipse(grown.adjusted(-2, -2, 2, 2))
 
         painter.setPen(text)
         font = QFont(self.font())
@@ -364,12 +403,12 @@ class AccentPicker(QWidget):
                          Qt.AlignLeft | Qt.AlignVCenter, self.color().name().upper())
         painter.end()
 
-    def handle(self, painter, x, y, fill):
+    def handle(self, painter, x, y, fill, radius=6):
         painter.setBrush(fill)
         painter.setPen(QPen(QColor(0, 0, 0, 120), 3))
-        painter.drawEllipse(QPoint(int(x), int(y)), 6, 6)
+        painter.drawEllipse(QPointF(x, y), radius, radius)
         painter.setPen(QPen(QColor(255, 255, 255), 2))
-        painter.drawEllipse(QPoint(int(x), int(y)), 6, 6)
+        painter.drawEllipse(QPointF(x, y), radius, radius)
 
     # -- input ---------------------------------------------------------------
     def mousePressEvent(self, event):
@@ -378,7 +417,8 @@ class AccentPicker(QWidget):
             if self.swatch_rect(index).contains(point):
                 self.hue, self.sat, self.val, _ = QColor(hex_color).getHsvF()
                 self.hue = max(0.0, self.hue)
-                self.update()
+                self.swell[index] = 2.0  # a swatch pops past its hover size, then settles
+                self.aim()
                 self.committed.emit(self.color().name())
                 return
         if self.bar_rect().adjusted(0, -6, 0, 6).contains(point):
@@ -387,16 +427,30 @@ class AccentPicker(QWidget):
             self.drag = "box"
         else:
             return
+        self.grab_goal = 1.0
+        self.aim()
         self.track(point)
 
     def mouseMoveEvent(self, event):
+        point = event.position().toPoint()
         if self.drag:
-            self.track(event.position().toPoint())
+            self.track(point)
+            return
+        for index in range(len(self.SWATCHES)):
+            self.swell_goal[index] = 1.0 if self.swatch_rect(index).adjusted(-3, -3, 3, 3).contains(point) else 0.0
+        self.aim()
+
+    def leaveEvent(self, event):
+        self.swell_goal = [0.0] * len(self.SWATCHES)
+        self.aim()
+        super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event):
         if self.drag:
             self.track(event.position().toPoint())
             self.drag = None
+            self.grab_goal = 0.0
+            self.aim()
             self.committed.emit(self.color().name())
 
     def track(self, point):
@@ -424,6 +478,44 @@ class StickyMenu(QMenu):
         self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint
                             | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+    def showEvent(self, event):
+        """Spring open: grows from where it was called (a submenu from its parent's edge),
+        overshoots a touch, and slides into place while fading in."""
+        super().showEvent(event)
+        final = QRect(self.geometry())
+        if final.width() < 20 or final.height() < 20:
+            return
+        submenu = isinstance(self.parentWidget(), QMenu)
+        curve = QEasingCurve(QEasingCurve.OutBack)
+        curve.setOvershoot(1.9)
+
+        def step(raw):
+            t = curve.valueForProgress(raw)
+            scale = 0.80 + 0.20 * t
+            width, height = round(final.width() * scale), round(final.height() * scale)
+            if submenu:  # hinges on its left edge, slides out sideways
+                x = final.x() - round((1.0 - min(t, 1.0)) * 16)
+                y = final.y()
+            else:        # hinges on the top centre, drops down a little
+                x = final.x() + (final.width() - width) // 2
+                y = final.y() - round((1.0 - min(t, 1.0)) * 12)
+            self.setGeometry(x, y, width, height)
+            self.setWindowOpacity(max(0.0, min(1.0, raw * 2.4)))
+
+        def done():
+            self.setGeometry(final)
+            self.setWindowOpacity(1.0)
+
+        anim = QVariantAnimation(self)
+        anim.setDuration(MENU_MS)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.valueChanged.connect(step)
+        anim.finished.connect(done)
+        self.fade_in = anim
+        step(0.0)
+        anim.start()
 
     def _activate(self, action):
         if action is None or not action.isEnabled() or action.menu() is not None:
@@ -461,10 +553,29 @@ class GearLabel(QLabel):
         super().__init__()
         self.callback = callback
         self.pressed = False
+        self.angle = 0.0   # degrees, driven by the pill's hover progress
+        self.squash = 1.0  # < 1 while the button is held down
+
+    def paintEvent(self, event):
+        pixmap = self.pixmap()
+        if pixmap is None or pixmap.isNull():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.translate(self.width() / 2, self.height() / 2)
+        painter.rotate(self.angle)
+        painter.scale(self.squash, self.squash)
+        half_w, half_h = self.width() / 2, self.height() / 2
+        painter.drawPixmap(QRectF(-half_w, -half_h, self.width(), self.height()),
+                           pixmap, QRectF(pixmap.rect()))
+        painter.end()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.pressed = True
+            self.squash = 0.78
+            self.update()
             event.accept()
             return
         super().mousePressEvent(event)
@@ -472,6 +583,8 @@ class GearLabel(QLabel):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             pressed, self.pressed = self.pressed, False
+            self.squash = 1.0
+            self.update()
             if pressed:
                 self.callback()
             event.accept()
@@ -509,6 +622,14 @@ class Reading(QWidget):
         self.text = text
         self.percent = percent
         self.anim = None
+        self.glide_anim = None
+        self.tweens = {}
+        self.reveal = 1.0   # 0 -> 1: slides up and fades in when the pill opens
+        self.hot = 0.0      # cursor over this reading
+        self.flash = 0.0    # the value just changed
+        self.shake = 0.0    # just turned critical
+        self.is_hot = False
+        self.shown = pill.shown_memory.get(key, percent)  # what is on screen right now
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
         font = QFont(self.font())
@@ -529,11 +650,89 @@ class Reading(QWidget):
         self.tint, self.bar = (QColor(c) for c in pill.tint_memory.get(key, (tint, bar)))
         self.target = (QColor(self.tint), QColor(self.bar))
         self.retarget(colors)
+        self.glide()
+        was_critical = pill.crit_memory.get(key, self.critical)
+        pill.crit_memory[key] = self.critical
+        if self.critical and not was_critical:
+            self.tween("shake", 0.0, 1.0, 520, QEasingCurve.Linear)
+
+    def tween(self, attr, start, end, ms, curve=QEasingCurve.OutCubic, delay=0, overshoot=None):
+        """Drive self.<attr> from start to end; a newer tween on the same attr replaces it."""
+        old = self.tweens.pop(attr, None)
+        if old is not None:
+            old.stop()
+        anim = QVariantAnimation(self)
+        anim.setDuration(ms)
+        easing = QEasingCurve(curve)
+        if overshoot is not None:
+            easing.setOvershoot(overshoot)
+        anim.setEasingCurve(easing)
+        anim.setStartValue(float(start))
+        anim.setEndValue(float(end))
+        anim.valueChanged.connect(lambda value: (setattr(self, attr, float(value)), self.update()))
+        self.tweens[attr] = anim
+        setattr(self, attr, float(start))
+        if delay:
+            QTimer.singleShot(delay, lambda: self.begin(anim))
+        else:
+            anim.start()
+
+    @staticmethod
+    def begin(anim):
+        try:
+            anim.start()
+        except RuntimeError:  # the reading was rebuilt away before its turn came
+            pass
+
+    def enter(self, delay):
+        self.tween("reveal", 0.0, 1.0, 460, QEasingCurve.OutBack, delay, overshoot=2.2)
+
+    def set_hot(self, hot):
+        if hot != self.is_hot:
+            self.is_hot = hot
+            self.tween("hot", self.hot, 1.0 if hot else 0.0, 170)
 
     def set_reading(self, text, percent, colors):
+        was_critical = self.critical
         self.text = text
         self.percent = percent
         self.retarget(colors)
+        self.pill.crit_memory[self.key] = self.critical
+        if self.critical and not was_critical:
+            self.tween("shake", 0.0, 1.0, 520, QEasingCurve.Linear)
+        self.glide()
+        self.update()
+
+    def gliding(self):
+        return (isinstance(self.percent, (int, float)) and isinstance(self.shown, (int, float))
+                and self.text.endswith("%"))
+
+    def glide(self):
+        """Slide the bar and count the number toward the new reading instead of jumping."""
+        if self.glide_anim is not None:
+            self.glide_anim.stop()
+            self.glide_anim = None
+        if not self.gliding() or abs(self.percent - self.shown) < 0.5:
+            self.shown = self.percent
+            self.pill.shown_memory[self.key] = self.percent
+            return
+        start = self.shown
+        if self.key.startswith("provider:") and abs(self.percent - self.shown) >= 1:
+            # only a provider's quota is worth a halo; CPU/RAM/GPU change on every tick
+            self.tween("flash", 1.0, 0.0, 950, QEasingCurve.OutQuad)
+        anim = QVariantAnimation(self)
+        anim.setDuration(GLIDE_MS)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.valueChanged.connect(lambda t: self.glide_to(start, t))
+        anim.finished.connect(lambda: self.glide_to(start, 1.0))
+        self.glide_anim = anim
+        anim.start()
+
+    def glide_to(self, start, t):
+        self.shown = start + (self.percent - start) * float(t)
+        self.pill.shown_memory[self.key] = self.shown
         self.update()
 
     def retarget(self, colors):
@@ -574,27 +773,41 @@ class Reading(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         width = self.width() - 2
-        if self.bars and isinstance(self.percent, (int, float)):
+        value = self.shown if self.gliding() else self.percent
+        label = f"{round(value)}%" if self.gliding() else self.text
+        glow = max(self.hot * 0.20, self.flash * 0.34)
+        if glow > 0.01:  # soft halo behind the number: hover, or a fresh change
+            halo = QColor(self.bar)
+            halo.setAlpha(int(255 * glow))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(halo)
+            painter.drawRoundedRect(QRectF(-3, -2, self.width() + 6, self.height() + 4), 6, 6)
+        if self.shake > 0:
+            painter.translate(math.sin(self.shake * math.pi * 7) * (1 - self.shake) * 3.2, 0)
+        painter.translate(0, (1.0 - self.reveal) * 9)
+        painter.setOpacity(max(0.0, min(1.0, self.reveal)))
+        if self.bars and isinstance(value, (int, float)):
             y = self.height() - self.BAR
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(core.THEME["divider"]))
             painter.drawRoundedRect(0, y, width, self.BAR, 1, 1)
-            fill = round(width * max(0.0, min(100.0, self.percent)) / 100)
+            fill = round(width * max(0.0, min(100.0, value)) / 100)
             if fill > 0:
                 painter.setOpacity(self.pulse_opacity())
                 painter.setBrush(self.bar)
                 painter.drawRoundedRect(0, y, max(fill, self.BAR), self.BAR, 1, 1)
         painter.setOpacity(self.pulse_opacity())
         painter.setFont(self.font())
-        painter.setPen(self.tint)
+        painter.setPen(mix(self.tint, QColor(core.THEME["text-primary"]), self.hot * 0.55))
         painter.drawText(QRect(0, 0, self.width(), self.text_height),
-                         Qt.AlignLeft | Qt.AlignVCenter, self.text)
+                         Qt.AlignLeft | Qt.AlignVCenter, label)
         painter.end()
 
     def pulse_opacity(self):
+        entrance = max(0.0, min(1.0, self.reveal))
         if self.critical and self.pill.pulse_running():
-            return 1.0 - 0.35 * self.pill.pulse_value
-        return 1.0
+            return entrance * (1.0 - 0.35 * self.pill.pulse_value)
+        return entrance
 
 
 class Shadow(QWidget):
@@ -626,13 +839,30 @@ class Shadow(QWidget):
         for grow in range(SHADOW_PAD - SHADOW_DROP, 0, -1):
             ring = base.adjusted(-grow, -grow, grow, grow)
             path = QPainterPath()
-            path.addRoundedRect(ring, ring.height() / 2, ring.height() / 2)
+            radius = min(ring.width(), ring.height()) / 2
+            path.addRoundedRect(ring, radius, radius)
             painter.fillPath(path, color)
         # Keep the pill itself clean: a translucent pill must not darken from below.
         painter.setCompositionMode(QPainter.CompositionMode_Clear)
         cut = QPainterPath()
-        cut.addRoundedRect(inner, inner.height() / 2, inner.height() / 2)
+        radius = min(inner.width(), inner.height()) / 2
+        cut.addRoundedRect(inner, radius, radius)
         painter.fillPath(cut, Qt.transparent)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        wave = self.pill.wave_t
+        if 0.0 < wave < 1.0:  # shock rings in the accent colour, three trailing each other
+            for lag in (0.0, 0.14, 0.28):
+                t = max(0.0, min(1.0, (wave - lag) / (1.0 - 0.28)))
+                if t <= 0.0:
+                    continue
+                grow = 1 + t * (SHADOW_PAD - 3)
+                ring = inner.adjusted(-grow, -grow, grow, grow)
+                accent = QColor(core.THEME["primary"])
+                accent.setAlpha(int(210 * (1.0 - t) ** 1.6))
+                painter.setPen(QPen(accent, 2.0 - t))
+                painter.setBrush(Qt.NoBrush)
+                radius = min(ring.width(), ring.height()) / 2
+                painter.drawRoundedRect(ring, radius, radius)
         painter.end()
 
 
@@ -652,6 +882,12 @@ class Pill(QWidget):
         self.readings = []
         self.themed = []          # restyle callables for widgets that carry theme colours
         self.system_labels = {}
+        self.crit_memory = {}     # was each reading critical last time, so a rebuild can still shake
+        self.shown_memory = {}    # last displayed value per reading key, for glides across rebuilds
+        self.vis_anim = None
+        self.snap_anim = None
+        self.wave_t = 1.0         # 0 -> 1 while a colour-change ring travels outward
+        self.wave_anim = None
         self.tint_memory = {}     # last colours per reading key, for cross-fades across rebuilds
         self.pulse_value = 0.0
         self.pulse_anim = None
@@ -672,7 +908,7 @@ class Pill(QWidget):
         # The content lives on its own fixed-size widget: resizing the window while
         # the island unfolds then clips it instead of reflowing the labels.
         self.content = QWidget(self)
-        self.box = QHBoxLayout(self.content)
+        self.box = QBoxLayout(QBoxLayout.LeftToRight, self.content)
         self.box.setContentsMargins(self.css["pad_h"], self.css["pad_v"],
                                     max(2, self.css["pad_h"] - 2), self.css["pad_v"])
         self.box.setSpacing(self.css["gap"])
@@ -684,7 +920,7 @@ class Pill(QWidget):
         self.build()
         self.hover_timer = QTimer(self)
         self.hover_timer.timeout.connect(self.poll_hover)
-        self.hover_timer.start(120)
+        self.hover_timer.start(60)
         self.collapse_timer = QTimer(self)
         self.collapse_timer.setSingleShot(True)
         self.collapse_timer.timeout.connect(self.maybe_collapse)
@@ -736,17 +972,38 @@ class Pill(QWidget):
 
     def divider(self):
         line = QWidget()
-        line.setFixedSize(1, max(6, self.css["icon"] - 2))
+        length = max(6, self.css["icon"] - 2)
+        line.setFixedSize(*((length, 1) if self.side_docked() else (1, length)))
         self.themed.append(lambda: line.setStyleSheet(f"background: {core.THEME['divider']};"))
         self.themed[-1]()
         line.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         return line
 
     # -- rhythm --------------------------------------------------------------
+    def side_docked(self):
+        """Docked to a left/right edge: the pill stacks its items top to bottom."""
+        return self.island_on() and core.island_edge(self.island_anchor()) in ("left", "right")
+
+    def orient_box(self):
+        pad_h, pad_v = self.css["pad_h"], self.css["pad_v"]
+        if self.side_docked():
+            self.box.setDirection(QBoxLayout.TopToBottom)
+            self.box.setContentsMargins(pad_v, pad_h, pad_v, max(2, pad_h - 2))
+        else:
+            self.box.setDirection(QBoxLayout.LeftToRight)
+            self.box.setContentsMargins(pad_h, pad_v, max(2, pad_h - 2), pad_v)
+
+    def add_item(self, widget):
+        self.box.addWidget(widget, 0, Qt.AlignHCenter if self.side_docked() else Qt.Alignment())
+
     def add_gap(self, width):
         if width > 0:
-            self.box.addSpacerItem(QSpacerItem(int(width), 0, QSizePolicy.Fixed,
-                                               QSizePolicy.Minimum))
+            if self.side_docked():
+                self.box.addSpacerItem(QSpacerItem(0, int(width), QSizePolicy.Minimum,
+                                                   QSizePolicy.Fixed))
+            else:
+                self.box.addSpacerItem(QSpacerItem(int(width), 0, QSizePolicy.Fixed,
+                                                   QSizePolicy.Minimum))
 
     def block_gap(self):
         """Extra space between two items (one provider, or one system reading)."""
@@ -758,6 +1015,7 @@ class Pill(QWidget):
 
     def build(self):
         self.clear()
+        self.orient_box()
         style = self.app.config.get("icon_style")
         dpr = self.devicePixelRatioF()
 
@@ -765,7 +1023,7 @@ class Pill(QWidget):
         rows = [row for row in self.rows
                 if row["id"].lower() not in hidden_providers][: self.app.config.get("max_providers")]
         if not rows:
-            self.box.addWidget(self.muted_label("—"))
+            self.add_item(self.muted_label("—"))
         for index, row in enumerate(rows):
             if index:
                 self.add_gap(self.block_gap())
@@ -781,7 +1039,7 @@ class Pill(QWidget):
                 initials.setFixedWidth(self.css["icon"] + 2)
                 initials.setAlignment(Qt.AlignCenter)
                 initials.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-                self.box.addWidget(initials)
+                self.add_item(initials)
             else:
                 icon = QLabel()
                 self.themed.append(lambda w=icon, b=row["brand"]: w.setPixmap(provider_pixmap(
@@ -790,15 +1048,15 @@ class Pill(QWidget):
                 self.themed[-1]()
                 icon.setFixedSize(self.css["icon"], self.css["icon"])
                 icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-                self.box.addWidget(icon)
+                self.add_item(icon)
             value = self.reading(f"provider:{row['id']}", row["value"], row["percent"])
             value.setToolTip(f"{row['name']} — {row['label']}" if row["label"] else row["name"])
-            self.box.addWidget(value)
+            self.add_item(value)
 
         if self.app.config.get("show_system"):
             hidden_system = self.app.hidden_items("hide_system")
             self.add_gap(self.group_gap())
-            self.box.addWidget(self.divider())
+            self.add_item(self.divider())
             self.add_gap(self.group_gap())
             counted = 0
             for name, reading in self.app.metrics.snapshot():
@@ -807,9 +1065,9 @@ class Pill(QWidget):
                 if counted:
                     self.add_gap(self.block_gap())
                 counted += 1
-                self.box.addWidget(self.muted_label(name))
+                self.add_item(self.muted_label(name))
                 value = self.reading(f"system:{name}", f"{reading}%", reading)
-                self.box.addWidget(value)
+                self.add_item(value)
                 self.system_labels[name] = value
 
         self.add_gap(self.block_gap())
@@ -819,9 +1077,9 @@ class Pill(QWidget):
         self.gear.setCursor(Qt.PointingHandCursor)
         self.gear.setToolTip(self.app.config.t("gear"))
         self.gear_effect = QGraphicsOpacityEffect(self.gear)
-        self.gear_effect.setOpacity(1.0 if self.hovered else 0.0)
         self.gear.setGraphicsEffect(self.gear_effect)
-        self.box.addWidget(self.gear)
+        self.sync_gear()
+        self.add_item(self.gear)
         self.apply_island_state()
 
     # -- paint ---------------------------------------------------------------
@@ -829,24 +1087,25 @@ class Pill(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         rect = self.rect().adjusted(0, 0, -1, -1)
-        radius = rect.height() / 2
+        radius = min(rect.width(), rect.height()) / 2
         path = QPainterPath()
         path.addRoundedRect(rect, radius, radius)
         alpha = self.app.effective_alpha(self.hovered)
         fill = QColor(core.THEME["surface"])
         fill.setAlpha(int(alpha * 255))
         painter.fillPath(path, fill)
-        if fill.lightness() < 128 and rect.height() > ISLAND_HEIGHT + 2:
+        if fill.lightness() < 128 and min(rect.width(), rect.height()) > ISLAND_HEIGHT + 2:
             # 1 px inner highlight along the top: a hint of depth on dark surfaces
             painter.setClipPath(path)
             painter.setPen(QPen(QColor(255, 255, 255, 18), 1))
             painter.drawLine(int(radius), 1, int(rect.width() - radius), 1)
             painter.setClipping(False)
         border = QColor(core.THEME["surface-border"])
-        if self.hover_t > 0:
+        glow = max(self.hover_t, (1.0 - self.wave_t) ** 2 if self.wave_t < 1.0 else 0.0)
+        if glow > 0:
             accent = QColor(core.THEME["primary"])
             accent.setAlpha(190)
-            border = mix(border, accent, self.hover_t)
+            border = mix(border, accent, min(1.0, glow))
         painter.setPen(QPen(border, 1))
         painter.drawPath(path)
         painter.end()
@@ -855,21 +1114,31 @@ class Pill(QWidget):
     def island_on(self):
         return bool(self.app.config.get("island"))
 
-    def collapse_rect(self):
+    def island_anchor(self):
+        return self.app.config.get("island_anchor")
+
+    def collapsed_size(self):
+        """The resting handle: wide on a top/bottom edge, tall on a side edge."""
+        if core.island_edge(self.island_anchor()) in ("left", "right"):
+            return QSize(ISLAND_HEIGHT, ISLAND_WIDTH)
+        return QSize(ISLAND_WIDTH, ISLAND_HEIGHT)
+
+    def docked_rect(self, size, offset=None):
         area = self.screen.availableGeometry()
-        rect = QRect(area.x(), area.y(), ISLAND_WIDTH, ISLAND_HEIGHT)
-        rect.moveLeft(core.island_x((area.x(), area.y(), area.width(), area.height()),
-                                    ISLAND_WIDTH, self.app.island_offset(self)))
-        return rect
+        x, y = core.island_position(
+            (area.x(), area.y(), area.width(), area.height()), self.island_anchor(),
+            size.width(), size.height(),
+            self.app.island_offset(self) if offset is None else offset)
+        return QRect(x, y, size.width(), size.height())
+
+    def collapse_rect(self):
+        return self.docked_rect(self.collapsed_size())
 
     def expanded_rect(self, size=None):
-        area = self.screen.availableGeometry()
-        size = size or self.natural_size()
-        rect = QRect(0, 0, size.width(), size.height())
-        rect.moveLeft(core.island_x((area.x(), area.y(), area.width(), area.height()),
-                                    size.width(), self.app.island_offset(self)))
-        rect.moveTop(area.y())
-        return rect
+        return self.docked_rect(size or self.natural_size())
+
+    def is_collapsed_size(self):
+        return self.size() == self.collapsed_size()
 
     def natural_size(self):
         """Size the content wants; the layout runs on the container's own size."""
@@ -909,7 +1178,7 @@ class Pill(QWidget):
                 self.resize(size)
             self.center_content()
         else:
-            self.setFixedSize(ISLAND_WIDTH, ISLAND_HEIGHT)
+            self.setFixedSize(self.collapsed_size())
             self.center_content()
         self.setWindowOpacity(1.0)
         self.set_content_opacity(1.0)
@@ -935,13 +1204,15 @@ class Pill(QWidget):
             self.island_anim = None
         start = self.geometry()
         if opened:
+            self.cascade()
             self.show_children(True)
             self.fit_content()
             self.setMinimumSize(0, 0)
             self.setMaximumSize(MAX_WIDGET_SIZE, MAX_WIDGET_SIZE)
             end = self.expanded_rect()
             duration = ISLAND_EXPAND_MS
-            curve = QEasingCurve(QEasingCurve.OutQuint)
+            curve = QEasingCurve(QEasingCurve.OutBack)  # springs a little past its size
+            curve.setOvershoot(1.25)
         else:
             end = self.collapse_rect()
             duration = ISLAND_HIDE_MS
@@ -951,7 +1222,7 @@ class Pill(QWidget):
             return
         # Interrupting a running fold/unfold: continue from the current opacity.
         base = (self.content_effect.opacity() if self.content_effect.isEnabled()
-                else (0.0 if opened and start.height() <= ISLAND_HEIGHT else 1.0))
+                else (0.0 if opened and min(start.width(), start.height()) <= ISLAND_HEIGHT else 1.0))
 
         def lerp(a, b, t):
             return round(a + (b - a) * t)
@@ -1013,7 +1284,9 @@ class Pill(QWidget):
             self.collapse_timer.start(ISLAND_COLLAPSE_MS)
         if self.island_busy():
             return
-        collapsed = (self.width(), self.height()) == (ISLAND_WIDTH, ISLAND_HEIGHT)
+        if self.snap_anim is not None:
+            return
+        collapsed = self.is_collapsed_size()
         if collapsed == self.island_open:  # state drifted from the window size
             self.apply_island_state()
             self.place()
@@ -1038,7 +1311,39 @@ class Pill(QWidget):
 
     def set_hover_t(self, value):
         self.hover_t = float(value)
+        self.sync_gear()
         self.update()
+
+    def ripple(self):
+        """A ring of the accent colour leaves the pill, and its border flares."""
+        if self.wave_anim is not None:
+            self.wave_anim.stop()
+        anim = QVariantAnimation(self)
+        anim.setDuration(WAVE_MS)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+
+        def step(value):
+            self.wave_t = float(value)
+            self.shadow.update()
+            self.update()
+
+        anim.valueChanged.connect(step)
+        anim.finished.connect(lambda: step(1.0))
+        self.wave_anim = anim
+        anim.start()
+
+    def sync_gear(self):
+        """The gear fades in step with the border and spins into place with a little overshoot."""
+        self.gear_effect.setOpacity(max(0.0, min(1.0, self.hover_t)))
+        self.gear.angle = QEasingCurve(QEasingCurve.OutBack).valueForProgress(self.hover_t) * 150
+        self.gear.update()
+
+    def cascade(self):
+        """Numbers drop in one after another."""
+        for index, reading in enumerate(self.readings):
+            reading.enter(70 + 55 * index)
 
     def pulse_running(self):
         return self.pulse_anim is not None and self.pulse_anim.state() == QAbstractAnimation.Running
@@ -1078,6 +1383,7 @@ class Pill(QWidget):
         super().showEvent(event)
         self.shadow.follow()
         self.shadow.show()
+        self.cascade()
         QTimer.singleShot(0, self.raise_)  # shadow first, pill on top of it
 
     def hideEvent(self, event):
@@ -1090,10 +1396,13 @@ class Pill(QWidget):
         if self.drag_offset is not None and QGuiApplication.mouseButtons() == Qt.NoButton:
             self.drag_offset = None
             self.drag_started = False
-        inside = self.frameGeometry().contains(QCursor.pos())
+        cursor = QCursor.pos()
+        inside = self.frameGeometry().contains(cursor)
+        for reading in self.readings:
+            area = QRect(reading.mapToGlobal(QPoint(0, 0)), reading.size()).adjusted(-5, -4, 5, 4)
+            reading.set_hot(inside and reading.isVisible() and area.contains(cursor))
         if inside != self.hovered:
             self.hovered = inside
-            self.gear_effect.setOpacity(1.0 if inside else 0.0)
             self.animate_hover(inside)
         self.sync_island()
         self.sync_pulse()
@@ -1119,13 +1428,58 @@ class Pill(QWidget):
                 if abs(delta.x()) < 3 and abs(delta.y()) < 3:
                     return
                 self.drag_started = True
-            if self.island_on():
-                self.move(point.x() - self.drag_offset.x(), self.y())
-            else:
-                self.move(point - self.drag_offset)
+            self.move(point - self.drag_offset)  # an island drags freely, then snaps to an edge
             event.accept()
         else:
             super().mouseMoveEvent(event)
+
+    def snap_to_island(self, duration=300):
+        """Glide to the docked rectangle (new edge, new corner, or just back in place)."""
+        if self.snap_anim is not None:
+            self.snap_anim.stop()
+            self.snap_anim = None
+        if self.island_anim is not None:
+            self.island_anim.stop()
+            self.island_anim = None
+        if self.box.direction() != (QBoxLayout.TopToBottom if self.side_docked()
+                                    else QBoxLayout.LeftToRight):
+            self.build()  # the edge changed between horizontal and vertical
+        target = self.expanded_rect() if self.island_open else self.collapse_rect()
+        start = self.geometry()
+        if start == target:
+            self.apply_island_state()
+            return
+        if self.island_open:
+            self.fit_content()
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(MAX_WIDGET_SIZE, MAX_WIDGET_SIZE)
+        curve = QEasingCurve(QEasingCurve.OutBack)
+        curve.setOvershoot(0.9)
+
+        def lerp(a, b, t):
+            return round(a + (b - a) * t)
+
+        def step(raw):
+            t = curve.valueForProgress(raw)
+            self.setGeometry(QRect(lerp(start.x(), target.x(), t), lerp(start.y(), target.y(), t),
+                                   lerp(start.width(), target.width(), t),
+                                   lerp(start.height(), target.height(), t)))
+            self.center_content()
+
+        def done():
+            self.snap_anim = None
+            self.setGeometry(target)
+            self.apply_island_state()
+            self.place()
+
+        anim = QVariantAnimation(self)
+        anim.setDuration(duration)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.valueChanged.connect(step)
+        anim.finished.connect(done)
+        self.snap_anim = anim
+        anim.start()
 
     def mouseReleaseEvent(self, event):
         if self.drag_offset is not None:
@@ -1154,13 +1508,12 @@ class Pill(QWidget):
         area = self.screen.availableGeometry()
         box = (area.x(), area.y(), area.width(), area.height())
         if self.island_on():
+            if self.snap_anim is not None:
+                return
             if self.island_open:
                 target = self.expanded_rect()
             else:
                 target = self.collapse_rect()
-                if force:
-                    target = QRect(area.x(), area.y(), ISLAND_WIDTH, ISLAND_HEIGHT)
-                    target.moveLeft(core.island_x(box, ISLAND_WIDTH, 0))
             if self.pos() != target.topLeft():
                 self.move(target.topLeft())
             return
@@ -1210,11 +1563,41 @@ class Pill(QWidget):
     def show_menu(self):
         self.app.popup_menu(self)
 
+    def fade_visibility(self, visible):
+        """Fade the pill and its shadow in or out; hiding happens once the fade is done."""
+        if self.vis_anim is not None:
+            self.vis_anim.stop()
+        start = self.windowOpacity() if self.isVisible() else 0.0
+        if visible:
+            self.setWindowOpacity(start)
+        anim = QVariantAnimation(self)
+        anim.setDuration(SHOW_MS)
+        anim.setEasingCurve(QEasingCurve.OutCubic if visible else QEasingCurve.InCubic)
+        anim.setStartValue(float(start))
+        anim.setEndValue(1.0 if visible else 0.0)
+
+        def step(value):
+            self.setWindowOpacity(float(value))
+            self.shadow.setWindowOpacity(float(value))
+
+        def done():
+            self.vis_anim = None
+            if not visible and self.app.hidden:
+                self.hide()
+            self.setWindowOpacity(1.0)
+            self.shadow.setWindowOpacity(1.0)
+
+        anim.valueChanged.connect(step)
+        anim.finished.connect(done)
+        self.vis_anim = anim
+        anim.start()
+
 
 # ------------------------------------------------------------------------------ app
 
 class VigIA(QObject):
     data_ready = Signal(dict)
+    source_ready = Signal(str)   # ai-usagebar version once VigIA has its own copy
 
     def __init__(self, app):
         super().__init__()
@@ -1231,6 +1614,9 @@ class VigIA(QObject):
         self.hotkey = None
         self.server = None
         self.data_ready.connect(self.apply_report)
+        self.source_ready.connect(self.on_source)
+        self.source_version = ''
+        self.updating_source = False
 
         core.set_theme(self.config.get("theme"), self.system_is_dark(),
                        self.config.get("accent"))
@@ -1244,6 +1630,7 @@ class VigIA(QObject):
         self.autostart()
         self.trigger_refresh()
         QTimer.singleShot(2000, self.start_timers)
+        threading.Thread(target=self.probe_source, daemon=True).start()
         QGuiApplication.instance().screenAdded.connect(lambda *_: self.rebuild_windows())
         QGuiApplication.instance().screenRemoved.connect(lambda *_: self.rebuild_windows())
 
@@ -1374,6 +1761,42 @@ class VigIA(QObject):
             return
         self.refreshing = True
         threading.Thread(target=self.fetch, daemon=True).start()
+
+    def probe_source(self, force=False):
+        """Background: make sure VigIA has its own ai-usagebar, then report its version."""
+        try:
+            binary = core.ensure_usagebar(force=force) or core.installed_binary(
+                "ai-usagebar", override=os.environ.get("AI_USAGEBAR_BIN"))
+            self.source_ready.emit(core.usagebar_version(binary))
+        except Exception as error:
+            core.log(f"source probe failed: {error}")
+            self.source_ready.emit("")
+
+    def on_source(self, version):
+        was_updating, self.updating_source = self.updating_source, False
+        changed = version != self.source_version
+        self.source_version = version
+        if was_updating:
+            for window in self.windows:
+                window.ripple()  # the data source was refreshed: same ring as a colour change
+            self.last_fetch = 0.0
+            self.trigger_refresh()
+            core.log(f"data source updated: ai-usagebar {version}")
+
+    def update_source(self):
+        """Menu action: fetch the newest ai-usagebar release when the installed one is older."""
+        if self.updating_source:
+            return
+        self.updating_source = True
+
+        def work():
+            latest = core.latest_usagebar_version()
+            current = self.source_version
+            newer = latest and (not current or tuple(map(int, latest.split("."))) >
+                                tuple(map(int, current.split("."))))
+            self.probe_source(force=bool(newer))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def fetch(self):
         try:
@@ -1551,15 +1974,18 @@ class VigIA(QObject):
             group.addAction(action)
             monitor_menu.addAction(action)
 
-        anchor_menu = self.submenu(menu, self.config.t("menu_anchor"))
-        group = QActionGroup(anchor_menu)
-        for key, label_key in core.ANCHORS.items():
-            action = QAction(self.config.t(label_key), anchor_menu)
-            action.setCheckable(True)
-            action.setChecked(key == self.config.get("anchor"))
-            action.triggered.connect(lambda _=False, value=key: self.set_anchor(value))
-            group.addAction(action)
-            anchor_menu.addAction(action)
+        if self.config.get("island"):
+            self.island_position_menu(menu)
+        else:
+            anchor_menu = self.submenu(menu, self.config.t("menu_anchor"))
+            group = QActionGroup(anchor_menu)
+            for key, label_key in core.ANCHORS.items():
+                action = QAction(self.config.t(label_key), anchor_menu)
+                action.setCheckable(True)
+                action.setChecked(key == self.config.get("anchor"))
+                action.triggered.connect(lambda _=False, value=key: self.set_anchor(value))
+                group.addAction(action)
+                anchor_menu.addAction(action)
 
         language_menu = self.submenu(menu, self.config.t("menu_language"))
         group = QActionGroup(language_menu)
@@ -1572,6 +1998,11 @@ class VigIA(QObject):
             group.addAction(action)
             language_menu.addAction(action)
 
+        menu.addSeparator()
+
+        source = menu.addAction(self.config.t("menu_source_update",
+                                              version=self.source_version or "…"))
+        source.triggered.connect(self.update_source)
         menu.addSeparator()
 
         island = QAction(self.config.t("menu_island"), menu)
@@ -1646,7 +2077,7 @@ class VigIA(QObject):
         scheme = getattr(hints, "colorScheme", None)
         return scheme is None or scheme() != Qt.ColorScheme.Light
 
-    def apply_theme(self, accent=None):
+    def apply_theme(self, accent=None, ripple=True):
         """Cross-fade to the configured theme: pills and any open menu follow every frame.
 
         `accent` previews a colour that is not saved (the accent picker)."""
@@ -1657,6 +2088,9 @@ class VigIA(QObject):
         anim = getattr(self, "theme_anim", None)
         if anim is not None:
             anim.stop()
+        if ripple and accent is None:
+            for window in self.windows:
+                window.ripple()
         if old == new:
             return
         # Only plain #rrggbb values blend; anything else (alpha forms) lands with the theme.
@@ -1716,6 +2150,25 @@ class VigIA(QObject):
         self.config.set("monitor", value)
         self.rebuild_windows()
 
+    def island_position_menu(self, menu):
+        """Edge x position along it: the island's own 12 docking spots, grouped by edge."""
+        position_menu = self.submenu(menu, self.config.t("menu_island_position"))
+        group = QActionGroup(position_menu)
+        current = self.config.get("island_anchor")
+        previous_edge = None
+        for key in core.ISLAND_ANCHORS:
+            edge, along = key.split("-", 1)
+            if previous_edge is not None and edge != previous_edge:
+                position_menu.addSeparator()
+            previous_edge = edge
+            label = f"{self.config.t('island_' + edge)} · {self.config.t('along_' + along)}"
+            action = QAction(label, position_menu)
+            action.setCheckable(True)
+            action.setChecked(key == current)
+            action.triggered.connect(lambda _=False, value=key: self.set_island_anchor(value))
+            group.addAction(action)
+            position_menu.addAction(action)
+
     def set_anchor(self, value):
         self.config.set("anchor", value)
         self.config.positions = {}
@@ -1744,7 +2197,7 @@ class VigIA(QObject):
         QTimer.singleShot(0, lambda: self.popup_menu(anchor, pos, open_key))
 
     def set_island(self, enabled):
-        """Dock the pills to the top edge (or release them back to the anchor)."""
+        """Dock the pills to a screen edge (or release them back to the anchor)."""
         self.config.set("island", enabled)
         if not enabled:
             self.island_pinned = False
@@ -1756,18 +2209,37 @@ class VigIA(QObject):
             window.island_open = False
             window.apply_island_state()
             window.place()
+        self.reopen_menu()  # the position submenu differs between the two modes
 
     def island_offset(self, window):
         return int(self.config.island_offsets.get(str(window.key()), 0))
 
     def remember_island(self, window):
+        """After a drag: dock to the nearest edge, keep where along it the island was dropped."""
         area = window.screen.availableGeometry()
-        center = window.x() + window.width() / 2
-        offset = int(round(center - (area.x() + area.width() / 2)))
-        limit = max(0, (area.width() - window.width()) // 2)
-        self.config.island_offsets[str(window.key())] = max(-limit, min(offset, limit))
+        frame = window.geometry()
+        gaps = {"left": frame.left() - area.left(), "right": area.right() - frame.right(),
+                "top": frame.top() - area.top(), "bottom": area.bottom() - frame.bottom()}
+        edge = min(gaps, key=gaps.get)
+        if edge in ("top", "bottom"):
+            anchor, offset = f"{edge}-center", frame.center().x() - area.center().x()
+            limit = max(0, (area.width() - frame.width()) // 2)
+        else:
+            anchor, offset = f"{edge}-middle", frame.center().y() - area.center().y()
+            limit = max(0, (area.height() - frame.height()) // 2)
+        self.config.set("island_anchor", anchor)
+        self.config.island_offsets = {str(window.key()): max(-limit, min(int(offset), limit))}
         self.config.save()
-        window.place()
+        for each in self.windows:
+            each.snap_to_island(300 if each is window else 360)
+
+    def set_island_anchor(self, value):
+        """Menu choice: dock to an edge/corner; offsets from earlier drags no longer apply."""
+        self.config.set("island_anchor", value)
+        self.config.island_offsets = {}
+        self.config.save()
+        for window in self.windows:
+            window.snap_to_island(380)
 
     def toggle_island_pinned(self):
         """A click on the island pins it open; another click lets it collapse."""
@@ -1818,9 +2290,13 @@ class VigIA(QObject):
     def reset_position(self):
         self.config.positions = {}
         self.config.island_offsets = {}
+        self.config.set("island_anchor", core.DEFAULTS["island_anchor"])
         self.config.save()
         for window in self.windows:
-            window.place(force=True)
+            if window.island_on():
+                window.snap_to_island(380)
+            else:
+                window.place(force=True)
 
     def remember_position(self, window):
         point = window.frameGeometry().center()
@@ -1846,13 +2322,14 @@ class VigIA(QObject):
     def hide_all(self):
         self.hidden = True
         for window in self.windows:
-            window.hide()
+            window.fade_visibility(False)
 
     def show_all(self):
         self.hidden = False
         for window in self.windows:
             window.show()
             window.place()
+            window.fade_visibility(True)
 
     def toggle(self):
         if self.hidden:

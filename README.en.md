@@ -31,6 +31,7 @@ CPU, RAM and GPU on the same line.
   Claude's `Fable (7d)`. The default is the most consumed one.
 - **Island mode**: dock the pill to the top edge like a *Dynamic Island* — only a thin
   strip shows; it opens on mouse hover (or on a click, which pins it open).
+  Dragging the island drops it anywhere and it **snaps to the nearest edge** (top, bottom, left or right). *Island position* in the menu offers 12 docking spots (edge × position along it).
 - **Five languages**: Portuguese, English, Spanish, French and German (or automatic from the system).
 - **Global hotkey** and optional autostart.
 
@@ -39,7 +40,7 @@ CPU, RAM and GPU on the same line.
 - **Python 3.11+** (uses `tomllib`).
 - **PySide6** (Qt 6) — the installer creates a private environment and downloads it (~82 MB download, ~245 MB on disk).
 - On Linux: **libxcb-cursor0** (the installer tries to handle it; see *Troubleshooting*).
-- The **[ai-usagebar](https://github.com/akitaonrails/ai-usagebar)** CLI, which reads the providers' quotas. Builds exist for Linux and Windows.
+- **[ai-usagebar](https://github.com/akitaonrails/ai-usagebar)**, which reads the providers' quotas, is **built in**: the installer (or first run) downloads the official binary, checks its sha256 and keeps it in `~/.local/share/vigia/bin` (Windows: `%LOCALAPPDATA%\vigia\bin`). Update it with **Update data source** in the menu.
 
 ## Installation
 
@@ -104,6 +105,7 @@ anchor = "top-right"    # top-left | top-center | top-right
                         # middle-left | middle-center | middle-right
                         # bottom-left | bottom-center | bottom-right
 island = false          # true: docks at the top as a thin strip (island mode)
+island_anchor = "top-center" # edge-position: top|bottom-left|center|right, left|right-top|middle|bottom
 always_on_top = true
 show_system = false     # CPU / RAM / GPU
 autostart = true

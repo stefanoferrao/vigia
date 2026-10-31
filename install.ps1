@@ -58,7 +58,10 @@ $shortcut.WorkingDirectory = $Root
 $shortcut.Description = "AI usage and system metrics at a glance"
 $shortcut.Save()
 
+Write-Host "Baixando a fonte de dados (ai-usagebar), verificada por sha256..."
+& $venvPython -I -c "import sys; sys.path.insert(0, sys.argv[1]); import vigia_core as c; sys.exit(0 if c.ensure_usagebar() else 1)" $Root
+if ($LASTEXITCODE -eq 0) { Write-Host "ai-usagebar embutido em $Root\bin." } else { Write-Host "Nao consegui baixar o ai-usagebar agora. O VigIA tenta de novo ao abrir; ou instale: https://github.com/akitaonrails/ai-usagebar" }
 Write-Host ""
 Write-Host "VigIA instalado."
 Write-Host "Abra pelo menu Iniciar (VigIA) ou rode: $launcher"
-Write-Host "Sem dados? Instale o CLI ai-usagebar: https://github.com/akitaonrails/ai-usagebar"
+

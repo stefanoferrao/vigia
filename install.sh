@@ -110,9 +110,14 @@ EOF
 gtk-update-icon-cache -f -t "$THEME" >/dev/null 2>&1 || true
 update-desktop-database "$APPS" >/dev/null 2>&1 || true
 
+say "Baixando a fonte de dados (ai-usagebar), verificada por sha256..."
+if "$DATA/venv/bin/python" -I -c "import sys; sys.path.insert(0, sys.argv[1]); import vigia_core as c; sys.exit(0 if c.ensure_usagebar() else 1)" "$DATA"; then
+    say "ai-usagebar embutido em $DATA/bin."
+else
+    say "Não consegui baixar o ai-usagebar agora. O VigIA tenta de novo ao abrir; ou instale: https://github.com/akitaonrails/ai-usagebar"
+fi
 say ""
 say "VigIA instalado em $BIN/vigia"
 say "Abra com: vigia"
 say "Ou procure \"VigIA\" no menu de aplicativos."
-say ""
-say "Sem dados? Instale o CLI ai-usagebar: https://github.com/akitaonrails/ai-usagebar"
+

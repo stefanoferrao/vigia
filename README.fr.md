@@ -31,6 +31,7 @@ Gemini, Grok…) et, si vous le souhaitez, le CPU, la RAM et le GPU sur la même
   `Fable (7d)` de Claude. Par défaut, c'est la plus consommée.
 - **Mode île** : ancrez la pastille au bord supérieur comme une *Dynamic Island* — seule une
   fine bande apparaît ; elle s'ouvre au survol de la souris (ou d'un clic, qui la garde ouverte).
+  Glisser l'île la dépose n'importe où et elle **se colle au bord le plus proche** (haut, bas, gauche ou droite). *Position de l'île* propose 12 ancrages (bord × position sur le bord).
 - **Cinq langues** : portugais, anglais, espagnol, français et allemand (ou automatique selon le système).
 - **Raccourci global** et démarrage automatique optionnel.
 
@@ -39,7 +40,7 @@ Gemini, Grok…) et, si vous le souhaitez, le CPU, la RAM et le GPU sur la même
 - **Python 3.11+** (utilise `tomllib`).
 - **PySide6** (Qt 6) — l'installateur crée un environnement privé et le télécharge (~82 Mo à télécharger, ~245 Mo sur disque).
 - Sous Linux : **libxcb-cursor0** (l'installateur essaie de le résoudre ; voir *Un problème ?*).
-- Le CLI **[ai-usagebar](https://github.com/akitaonrails/ai-usagebar)**, qui lit les quotas des fournisseurs. Des builds existent pour Linux et Windows.
+- **[ai-usagebar](https://github.com/akitaonrails/ai-usagebar)**, qui lit les quotas des fournisseurs, est **intégré** : l'installateur (ou le premier lancement) télécharge le binaire officiel, vérifie son sha256 et le garde dans `~/.local/share/vigia/bin` (Windows : `%LOCALAPPDATA%\vigia\bin`). Mise à jour via **Mettre à jour la source de données** dans le menu.
 
 ## Installation
 
@@ -104,6 +105,7 @@ anchor = "top-right"    # top-left | top-center | top-right
                         # middle-left | middle-center | middle-right
                         # bottom-left | bottom-center | bottom-right
 island = false          # true : ancré en haut comme une fine bande (mode îlot)
+island_anchor = "top-center" # bord-position : top|bottom-left|center|right, left|right-top|middle|bottom
 always_on_top = true
 show_system = false     # CPU / RAM / GPU
 autostart = true

@@ -31,6 +31,7 @@ CPU, RAM y GPU en la misma línea.
   `Fable (7d)` de Claude. Por defecto se muestra el más consumido.
 - **Modo isla**: ancla la píldora al borde superior como una *Dynamic Island* — solo
   se ve una franja fina; se abre al pasar el ratón (o con un clic, que la fija abierta).
+  Al arrastrar la isla se suelta en cualquier lugar y **se pega al borde más cercano** (arriba, abajo, izquierda o derecha). *Posición de la isla* ofrece 12 anclajes (borde × posición en el borde).
 - **Cinco idiomas**: portugués, inglés, español, francés y alemán (o automático según el sistema).
 - **Atajo global** y autostart opcional.
 
@@ -39,7 +40,7 @@ CPU, RAM y GPU en la misma línea.
 - **Python 3.11+** (usa `tomllib`).
 - **PySide6** (Qt 6) — el instalador crea un entorno privado y lo descarga (~82 MB de descarga, ~245 MB en disco).
 - En Linux: **libxcb-cursor0** (el instalador intenta resolverlo; ve *¿Problemas?*).
-- El CLI **[ai-usagebar](https://github.com/akitaonrails/ai-usagebar)**, que lee las cuotas de los proveedores. Hay builds para Linux y Windows.
+- **[ai-usagebar](https://github.com/akitaonrails/ai-usagebar)**, que lee las cuotas de los proveedores, **viene integrado**: el instalador (o el primer uso) descarga el binario oficial, comprueba su sha256 y lo guarda en `~/.local/share/vigia/bin` (Windows: `%LOCALAPPDATA%\vigia\bin`). Se actualiza con **Actualizar fuente de datos** en el menú.
 
 ## Instalación
 
@@ -104,6 +105,7 @@ anchor = "top-right"    # top-left | top-center | top-right
                         # middle-left | middle-center | middle-right
                         # bottom-left | bottom-center | bottom-right
 island = false          # true: ancla arriba como una franja fina (modo isla)
+island_anchor = "top-center" # borde-posición: top|bottom-left|center|right, left|right-top|middle|bottom
 always_on_top = true
 show_system = false     # CPU / RAM / GPU
 autostart = true

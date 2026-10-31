@@ -10,12 +10,18 @@ import os
 import platform
 import re
 import shutil
+import hashlib
+import io
 import subprocess
+import tarfile
+import tempfile
 import tomllib
+import urllib.parse
+import urllib.request
 from datetime import datetime
 
 APP_NAME = "VigIA"
-VERSION = "2.5.4"
+VERSION = "2.5.5"
 IS_WINDOWS = platform.system() == "Windows"
 HOME = os.path.expanduser("~")
 MARGIN = 18
@@ -65,7 +71,7 @@ STRINGS = {
         "menu_metric": "O que vigiar",
         "metric_auto": "Maior uso (automático)",
         "metric_waiting": "Aguardando dados…",
-        "menu_island": "Encaixar no topo (ilha)",
+        "menu_island": "Modo ilha (encaixar na borda)",
         "size_small": "Pequeno", "size_medium": "Médio", "size_large": "Grande",
         "icons_brand": "Cor da marca", "icons_mono": "Monocromático",
         "icons_alert": "Alerta por uso",
@@ -87,6 +93,18 @@ STRINGS = {
         "anchor_middle_center": "Meio centro", "anchor_middle_right": "Meio direito",
         "anchor_bottom_left": "Base esquerda", "anchor_bottom_center": "Base centro",
         "anchor_bottom_right": "Base direita",
+        "menu_island_position": "Posição da ilha",
+        "menu_source_update": "Atualizar fonte de dados (ai-usagebar {version})",
+        "island_top": "Topo",
+        "island_bottom": "Base",
+        "island_left": "Esquerda",
+        "island_right": "Direita",
+        "along_left": "esquerda",
+        "along_center": "centro",
+        "along_right": "direita",
+        "along_top": "topo",
+        "along_middle": "meio",
+        "along_bottom": "base",
     },
     "en": {
         "menu_opacity": "Opacity",
@@ -105,7 +123,7 @@ STRINGS = {
         "menu_metric": "What to watch",
         "metric_auto": "Most used (auto)",
         "metric_waiting": "Waiting for data…",
-        "menu_island": "Dock to top edge (island)",
+        "menu_island": "Island mode (dock to an edge)",
         "size_small": "Small", "size_medium": "Medium", "size_large": "Large",
         "icons_brand": "Brand colour", "icons_mono": "Monochrome",
         "icons_alert": "Usage alert",
@@ -127,6 +145,18 @@ STRINGS = {
         "anchor_middle_center": "Middle centre", "anchor_middle_right": "Middle right",
         "anchor_bottom_left": "Bottom left", "anchor_bottom_center": "Bottom centre",
         "anchor_bottom_right": "Bottom right",
+        "menu_island_position": "Island position",
+        "menu_source_update": "Update data source (ai-usagebar {version})",
+        "island_top": "Top",
+        "island_bottom": "Bottom",
+        "island_left": "Left",
+        "island_right": "Right",
+        "along_left": "left",
+        "along_center": "centre",
+        "along_right": "right",
+        "along_top": "top",
+        "along_middle": "middle",
+        "along_bottom": "bottom",
     },
     "es": {
         "menu_opacity": "Opacidad",
@@ -145,7 +175,7 @@ STRINGS = {
         "menu_metric": "Qué vigilar",
         "metric_auto": "Mayor uso (automático)",
         "metric_waiting": "Esperando datos…",
-        "menu_island": "Anclar arriba (isla)",
+        "menu_island": "Modo isla (anclar a un borde)",
         "size_small": "Pequeño", "size_medium": "Mediano", "size_large": "Grande",
         "icons_brand": "Color de marca", "icons_mono": "Monocromático",
         "icons_alert": "Alerta por uso",
@@ -167,6 +197,18 @@ STRINGS = {
         "anchor_middle_center": "Medio centro", "anchor_middle_right": "Medio derecha",
         "anchor_bottom_left": "Abajo izquierda", "anchor_bottom_center": "Abajo centro",
         "anchor_bottom_right": "Abajo derecha",
+        "menu_island_position": "Posición de la isla",
+        "menu_source_update": "Actualizar fuente de datos (ai-usagebar {version})",
+        "island_top": "Arriba",
+        "island_bottom": "Abajo",
+        "island_left": "Izquierda",
+        "island_right": "Derecha",
+        "along_left": "izquierda",
+        "along_center": "centro",
+        "along_right": "derecha",
+        "along_top": "arriba",
+        "along_middle": "medio",
+        "along_bottom": "abajo",
     },
     "fr": {
         "menu_opacity": "Opacité",
@@ -185,7 +227,7 @@ STRINGS = {
         "menu_metric": "Quoi surveiller",
         "metric_auto": "Le plus utilisé (auto)",
         "metric_waiting": "En attente des données…",
-        "menu_island": "Ancrer en haut (île)",
+        "menu_island": "Mode île (ancrer à un bord)",
         "size_small": "Petit", "size_medium": "Moyen", "size_large": "Grand",
         "icons_brand": "Couleur de marque", "icons_mono": "Monochrome",
         "icons_alert": "Alerte d'usage",
@@ -207,6 +249,18 @@ STRINGS = {
         "anchor_middle_center": "Milieu centre", "anchor_middle_right": "Milieu droite",
         "anchor_bottom_left": "Bas gauche", "anchor_bottom_center": "Bas centre",
         "anchor_bottom_right": "Bas droite",
+        "menu_island_position": "Position de l'île",
+        "menu_source_update": "Mettre à jour la source de données (ai-usagebar {version})",
+        "island_top": "Haut",
+        "island_bottom": "Bas",
+        "island_left": "Gauche",
+        "island_right": "Droite",
+        "along_left": "gauche",
+        "along_center": "centre",
+        "along_right": "droite",
+        "along_top": "haut",
+        "along_middle": "milieu",
+        "along_bottom": "bas",
     },
     "de": {
         "menu_opacity": "Deckkraft",
@@ -225,7 +279,7 @@ STRINGS = {
         "menu_metric": "Was überwachen",
         "metric_auto": "Höchste Nutzung (automatisch)",
         "metric_waiting": "Warte auf Daten…",
-        "menu_island": "Oben andocken (Insel)",
+        "menu_island": "Inselmodus (an einer Kante andocken)",
         "size_small": "Klein", "size_medium": "Mittel", "size_large": "Groß",
         "icons_brand": "Markenfarbe", "icons_mono": "Einfarbig",
         "icons_alert": "Nutzungswarnung",
@@ -247,6 +301,18 @@ STRINGS = {
         "anchor_middle_center": "Mitte", "anchor_middle_right": "Mitte rechts",
         "anchor_bottom_left": "Unten links", "anchor_bottom_center": "Unten Mitte",
         "anchor_bottom_right": "Unten rechts",
+        "menu_island_position": "Position der Insel",
+        "menu_source_update": "Datenquelle aktualisieren (ai-usagebar {version})",
+        "island_top": "Oben",
+        "island_bottom": "Unten",
+        "island_left": "Links",
+        "island_right": "Rechts",
+        "along_left": "links",
+        "along_center": "Mitte",
+        "along_right": "rechts",
+        "along_top": "oben",
+        "along_middle": "Mitte",
+        "along_bottom": "unten",
     },
 }
 
@@ -264,7 +330,8 @@ DEFAULTS = {
     "icon_style": "brand",       # brand | mono | alert
     "monitor": "primary",        # primary | secondary | all | <index> | <screen name>
     "anchor": "top-right",
-    "island": False,         # dock the pills to the top edge, Dynamic Island style
+    "island": False,         # dock the pills to a screen edge, Dynamic Island style
+    "island_anchor": "top-center",  # edge-position: top|bottom-left|center|right, left|right-top|middle|bottom
     "always_on_top": True,
     "show_system": False,
     "autostart": True,
@@ -429,6 +496,8 @@ class Config:
         # "primary" / "secondary" / "all" or a screen name (also legacy indexes)
         if not str(self.values["monitor"]).strip():
             self.values["monitor"] = DEFAULTS["monitor"]
+        if self.values["island_anchor"] not in ISLAND_ANCHORS:
+            self.values["island_anchor"] = DEFAULTS["island_anchor"]
         if self.values["anchor"] not in ANCHORS:
             self.values["anchor"] = DEFAULTS["anchor"]
         if not str(self.values["theme"]).strip():
@@ -549,12 +618,126 @@ def set_autostart(enabled, command):
 
 # ------------------------------------------------------------------------ providers
 
+USAGEBAR_REPO = "akitaonrails/ai-usagebar"
+USAGEBAR_BIN = "ai-usagebar"
+DOWNLOAD_LIMIT = 80 * 1024 * 1024     # the biggest release asset is ~17 MB; refuse anything absurd
+TRUSTED_HOSTS = ("github.com", "githubusercontent.com")
+
+
+def bundled_dir(home=None):
+    """Where VigIA keeps its own copy of the ai-usagebar data source."""
+    home = home or HOME
+    if IS_WINDOWS:
+        local = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+        return os.path.join(local, "vigia", "bin")
+    return os.path.join(home, ".local", "share", "vigia", "bin")
+
+
+def usagebar_asset(system=None, machine=None):
+    """Release asset for this platform: (asset name, "tar" | "exe"), or None if unsupported."""
+    system = (system or platform.system()).lower()
+    machine = (machine or platform.machine()).lower()
+    arch = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}.get(machine)
+    if system == "linux" and arch:
+        return f"ai-usagebar-linux-{arch}.tar.gz", "tar"
+    if system == "windows" and arch == "x86_64":
+        return "ai-usagebar-windows-x86_64.exe", "exe"
+    return None
+
+
+def parse_sha256(text):
+    """First 64-hex token of a `sha256sum`-style file."""
+    match = re.search(r"\b([0-9a-fA-F]{64})\b", text or "")
+    return match.group(1).lower() if match else None
+
+
+def _download(url, timeout=60):
+    """GET over https from GitHub only (also after redirects), capped in size."""
+    if not url.startswith("https://"):
+        raise ValueError("só https")
+    request = urllib.request.Request(url, headers={"User-Agent": f"VigIA/{VERSION}"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        host = urllib.parse.urlparse(response.geturl()).hostname or ""
+        if not any(host == ok or host.endswith("." + ok) for ok in TRUSTED_HOSTS):
+            raise ValueError(f"host inesperado: {host}")
+        data = response.read(DOWNLOAD_LIMIT + 1)
+    if len(data) > DOWNLOAD_LIMIT:
+        raise ValueError("download grande demais")
+    return data
+
+
+def extract_usagebar(blob, kind):
+    """The ai-usagebar executable bytes out of a release asset (tar.gz member or raw .exe)."""
+    if kind == "exe":
+        return blob
+    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as archive:
+        for member in archive.getmembers():
+            if os.path.basename(member.name) == USAGEBAR_BIN and member.isfile():
+                return archive.extractfile(member).read()
+    raise ValueError("binário não encontrado no pacote")
+
+
+def usagebar_version(binary):
+    """Version string of an ai-usagebar executable ("1.47.0"), or "" if it will not tell."""
+    try:
+        options = {"capture_output": True, "text": True, "timeout": 10}
+        if IS_WINDOWS:
+            options["creationflags"] = 0x08000000
+        out = subprocess.run([binary, "--version"], **options).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    match = re.search(r"(\d+\.\d+\.\d+)", out or "")
+    return match.group(1) if match else ""
+
+
+def latest_usagebar_version():
+    try:
+        data = _download(f"https://api.github.com/repos/{USAGEBAR_REPO}/releases/latest", timeout=20)
+        return str(json.loads(data).get("tag_name", "")).lstrip("v")
+    except (OSError, ValueError):
+        return ""
+
+
+def ensure_usagebar(force=False, fetch=_download):
+    """Make sure VigIA owns a working ai-usagebar; download and verify it when it does not.
+
+    Returns the executable path, or None if this platform has no release or the download
+    failed (the caller falls back to whatever is on the system). The asset is checked
+    against the sha256 published beside it before anything is written."""
+    target = os.path.join(bundled_dir(), USAGEBAR_BIN + (".exe" if IS_WINDOWS else ""))
+    if os.path.isfile(target) and not force:
+        return target
+    asset = usagebar_asset()
+    if asset is None:
+        return None
+    name, kind = asset
+    base = f"https://github.com/{USAGEBAR_REPO}/releases/latest/download/{name}"
+    try:
+        blob = fetch(base)
+        expected = parse_sha256(fetch(base + ".sha256").decode("utf-8", "replace"))
+        if not expected or hashlib.sha256(blob).hexdigest() != expected:
+            raise ValueError("sha256 não confere")
+        binary = extract_usagebar(blob, kind)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        handle, temp = tempfile.mkstemp(dir=os.path.dirname(target), prefix=".ua-")
+        with os.fdopen(handle, "wb") as out:
+            out.write(binary)
+        os.chmod(temp, 0o755)
+        os.replace(temp, target)
+        log(f"ai-usagebar installed at {target}")
+        return target
+    except (OSError, ValueError, tarfile.TarError) as error:
+        log(f"ai-usagebar download failed: {error}")
+        return None
+
+
 def installed_binary(name, home=None, override=None):
     """Find the ai-usagebar CLI without trusting an arbitrary PATH entry."""
     home = home or HOME
     if override:
         return override
     candidates = [
+        os.path.join(bundled_dir(home), name + (".exe" if IS_WINDOWS else "")),  # VigIA's own copy first
         os.path.join(home, ".local", "bin", name),
         os.path.join(home, ".cargo", "bin", name),
         "/usr/local/bin/" + name,
@@ -563,6 +746,7 @@ def installed_binary(name, home=None, override=None):
     if IS_WINDOWS:
         local = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
         candidates = [
+            candidates[0],
             os.path.join(local, "Programs", "ai-usagebar", name + ".exe"),
             os.path.join(local, "Programs", name, name + ".exe"),
             os.path.join(local, name, name + ".exe"),
@@ -646,6 +830,8 @@ def dashboard_entries(data):
 
 def fetch_report(binary=None, timeout=25):
     binary = binary or installed_binary("ai-usagebar", override=os.environ.get("AI_USAGEBAR_BIN"))
+    if not os.path.isfile(binary):  # nothing on the system: fetch VigIA's own copy once
+        binary = ensure_usagebar() or binary
     options = {"capture_output": True, "text": True, "timeout": timeout}
     if IS_WINDOWS:
         options["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
@@ -793,6 +979,36 @@ def anchored_position(area, width, height, anchor, margin=MARGIN):
         "bottom": y0 + area_h - height - margin,
     }[vertical]
     return x, y
+
+
+ISLAND_ANCHORS = [f"{edge}-{along}" for edge, alongs in (
+    ("top", ("left", "center", "right")), ("bottom", ("left", "center", "right")),
+    ("left", ("top", "middle", "bottom")), ("right", ("top", "middle", "bottom")))
+    for along in alongs]
+
+
+def island_edge(anchor):
+    return str(anchor).split("-", 1)[0]
+
+
+def island_position(area, anchor, width, height, offset=0):
+    """Top-left corner of an island docked to an edge of `area`.
+
+    `anchor` is "<edge>-<where along it>"; `offset` nudges the island along the edge
+    (x for top/bottom, y for left/right) and is clamped so it never leaves the area."""
+    x0, y0, area_w, area_h = area
+    edge, along = str(anchor).split("-", 1)
+    if edge in ("top", "bottom"):
+        base = {"left": x0, "center": x0 + (area_w - width) / 2,
+                "right": x0 + area_w - width}.get(along, x0 + (area_w - width) / 2)
+        x = max(x0, min(base + offset, x0 + area_w - width))
+        y = y0 if edge == "top" else y0 + area_h - height
+    else:
+        base = {"top": y0, "middle": y0 + (area_h - height) / 2,
+                "bottom": y0 + area_h - height}.get(along, y0 + (area_h - height) / 2)
+        y = max(y0, min(base + offset, y0 + area_h - height))
+        x = x0 if edge == "left" else x0 + area_w - width
+    return int(round(x)), int(round(y))
 
 
 def island_x(area, width, offset=0):

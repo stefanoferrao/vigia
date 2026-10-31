@@ -45,6 +45,46 @@ class AnchorTests(unittest.TestCase):
         self.assertEqual(core.island_x(area, 120, -9999), 100)
         self.assertEqual(core.island_x(area, 120, 9999), 980)
 
+    def test_island_docks_to_every_edge(self):
+        area = (100, 50, 1000, 800)
+        self.assertEqual(core.island_position(area, "top-center", 120, 8), (540, 50))
+        self.assertEqual(core.island_position(area, "bottom-right", 200, 26), (900, 824))
+        self.assertEqual(core.island_position(area, "left-middle", 200, 26), (100, 437))
+        self.assertEqual(core.island_position(area, "right-top", 8, 120, 40), (1092, 90))
+        self.assertEqual(core.island_position(area, "left-bottom", 200, 26, 9999), (100, 824))
+        self.assertEqual(core.island_position(area, "top-left", 200, 26, -500), (100, 50))
+        self.assertEqual(len(core.ISLAND_ANCHORS), 12)
+
+    def test_usagebar_asset_per_platform(self):
+        self.assertEqual(core.usagebar_asset("Linux", "x86_64"), ("ai-usagebar-linux-x86_64.tar.gz", "tar"))
+        self.assertEqual(core.usagebar_asset("Linux", "arm64"), ("ai-usagebar-linux-aarch64.tar.gz", "tar"))
+        self.assertEqual(core.usagebar_asset("Windows", "AMD64"), ("ai-usagebar-windows-x86_64.exe", "exe"))
+        self.assertIsNone(core.usagebar_asset("Linux", "riscv64"))
+
+    def test_sha256_file_parsing(self):
+        digest = "ab" * 32
+        self.assertEqual(core.parse_sha256(f"{digest}  ai-usagebar-linux-x86_64.tar.gz\n"), digest)
+        self.assertIsNone(core.parse_sha256("not a hash"))
+
+    def test_ensure_usagebar_verifies_and_installs(self):
+        import hashlib, io, tarfile, tempfile
+        payload = b"#!/bin/sh\necho ai-usagebar 9.9.9\n"
+        raw = io.BytesIO()
+        with tarfile.open(fileobj=raw, mode="w:gz") as archive:
+            info = tarfile.TarInfo("./ai-usagebar")
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+        blob = raw.getvalue()
+        good = hashlib.sha256(blob).hexdigest().encode()
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as home, \
+                mock.patch.object(core, "HOME", home), \
+                mock.patch.object(core, "usagebar_asset", return_value=("x.tar.gz", "tar")):
+            bad = core.ensure_usagebar(fetch=lambda url: blob if url.endswith(".gz") else b"0" * 64)
+            self.assertIsNone(bad)  # checksum mismatch: nothing is written
+            path = core.ensure_usagebar(fetch=lambda url: blob if url.endswith(".gz") else good)
+            self.assertTrue(path and open(path, "rb").read() == payload)
+
     def position(self, anchor):
         return core.anchored_position(self.AREA, *self.BOX, anchor)
 
